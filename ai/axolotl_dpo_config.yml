@@ -1,0 +1,87 @@
+# ============================================
+# Axolotl DPO Config for SR&ED Report Writer
+# ============================================
+# This config trains using your thumbs up/down feedback.
+# DPO (Direct Preference Optimization) teaches the model to
+# prefer the paragraphs you liked and avoid the ones you didn't.
+# ============================================
+#
+# HOW TO USE:
+#   1. Generate reports and rate paragraphs with thumbs up/down
+#   2. Click "Export Feedback" to download the JSONL files
+#   3. Copy sred_dpo_feedback.jsonl to ai/dataset/
+#   4. Run: axolotl train ai/axolotl_dpo_config.yml
+#
+# ============================================
+
+base_model: mistralai/Mistral-7B-Instruct-v0.3
+model_type: MistralForCausalLM
+tokenizer_type: LlamaTokenizer
+trust_remote_code: true
+
+# If you already trained with SFT, point to that model instead:
+# base_model: ./ai/output/sred-mistral-7b-qlora/merged
+
+# 4-bit quantization
+load_in_8bit: false
+load_in_4bit: true
+
+# LoRA config
+adapter: qlora
+lora_r: 32
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target_linear: true
+
+# DPO-specific settings
+rl: dpo
+dpo_beta: 0.1
+
+# Dataset - your exported feedback
+datasets:
+  - path: ./dataset/sred_dpo_feedback.jsonl
+    type: chatml.intel
+    # Format: {"prompt": "...", "chosen": "...", "rejected": "..."}
+
+# Output
+output_dir: ./output/sred-mistral-7b-dpo
+
+# Sequence length
+sequence_len: 2048
+sample_packing: false
+pad_to_sequence_len: true
+
+# Training hyperparameters  
+gradient_accumulation_steps: 4
+micro_batch_size: 1
+num_epochs: 2
+optimizer: paged_adamw_32bit
+lr_scheduler: cosine
+learning_rate: 0.00005
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+# Warmup
+warmup_steps: 10
+
+# Training settings
+train_on_inputs: false
+bf16: auto
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+
+# Logging
+logging_steps: 1
+save_strategy: steps
+save_steps: 25
+save_total_limit: 2
+
+# Wandb (optional)
+wandb_project: sred-report-dpo
+wandb_name: sred-dpo-feedback-run
+
+flash_attention: true
+auto_resume_from_checkpoints: true
+special_tokens:
+  pad_token: "<pad>"

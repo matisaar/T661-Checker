@@ -1,0 +1,23 @@
+# Dependencies
+ai/venv/
+ai/output/
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Exported feedback (user-specific)
+sred_dpo_feedback.jsonl
+sred_sft_feedback.jsonl

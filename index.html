@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SR&ED Report Checker & Generator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📄 SR&ED Report Checker & Generator</h1>
+            <p class="subtitle">Validate and Generate T661-Compliant Project Descriptions</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="checker">🔍 Report Checker</button>
+            <button class="tab-btn" data-tab="generator">✍️ Report Generator</button>
+            <button class="tab-btn" data-tab="ai">🤖 AI Writer</button>
+        </div>
+
+        <!-- CHECKER TAB -->
+        <div id="checker-tab" class="tab-content active">
+            <div class="intro-card">
+                <h2>Paste Your SR&ED Report for Analysis</h2>
+                <p>This tool analyzes your T661 project descriptions against CRA requirements and identifies missing elements, weak language, and compliance issues.</p>
+            </div>
+
+            <div class="input-section">
+                <div class="input-group">
+                    <label>Line 242 - Scientific or Technological Advancement</label>
+                    <textarea id="check-advancement" placeholder="Paste your Line 242 description here...&#10;&#10;What scientific or technological advancement were you trying to achieve?"></textarea>
+                    <div class="char-count"><span id="adv-count">0</span> words | Recommended: 300-700</div>
+                </div>
+
+                <div class="input-group">
+                    <label>Line 244 - Scientific or Technological Uncertainty</label>
+                    <textarea id="check-uncertainty" placeholder="Paste your Line 244 description here...&#10;&#10;What scientific or technological uncertainties did you face?"></textarea>
+                    <div class="char-count"><span id="unc-count">0</span> words | Recommended: 300-700</div>
+                </div>
+
+                <div class="input-group">
+                    <label>Line 246 - Work Performed</label>
+                    <textarea id="check-work" placeholder="Paste your Line 246 description here...&#10;&#10;What work did you perform to address the uncertainties?"></textarea>
+                    <div class="char-count"><span id="work-count">0</span> words | Recommended: 500-1000</div>
+                </div>
+
+                <button class="primary-btn" onclick="analyzeReport()">🔍 Analyze Report</button>
+            </div>
+
+            <div id="analysis-results" class="results-section" style="display: none;"></div>
+        </div>
+
+        <!-- GENERATOR TAB -->
+        <div id="generator-tab" class="tab-content">
+            <div class="intro-card">
+                <h2>Generate T661-Compliant Descriptions</h2>
+                <p>Answer the guided questions below and this tool will generate properly structured T661 narrative sections.</p>
+            </div>
+
+            <form id="generator-form">
+                <!-- Project Overview -->
+                <section class="form-section">
+                    <h3>📋 Project Overview</h3>
+                    
+                    <div class="form-group">
+                        <label>Project Title</label>
+                        <input type="text" id="gen-title" placeholder="e.g., Development of Advanced Machine Learning Algorithm for Real-Time Fraud Detection">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Industry/Field</label>
+                        <select id="gen-field">
+                            <option value="">Select...</option>
+                            <option value="software">Software Development</option>
+                            <option value="manufacturing">Manufacturing</option>
+                            <option value="biotech">Biotechnology/Life Sciences</option>
+                            <option value="cleantech">Clean Technology/Environmental</option>
+                            <option value="aerospace">Aerospace/Defense</option>
+                            <option value="electronics">Electronics/Hardware</option>
+                            <option value="materials">Materials Science</option>
+                            <option value="food">Food Science/Agriculture</option>
+                            <option value="medical">Medical Devices/Healthcare</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Line 242 Questions -->
+                <section class="form-section">
+                    <h3>🎯 Line 242 - Technological Advancement</h3>
+                    <p class="section-help">Describe what you were trying to achieve that represents an advancement beyond current practice.</p>
+
+                    <div class="form-group">
+                        <label>What was the technological objective of this project?</label>
+                        <textarea id="gen-objective" placeholder="e.g., To develop a system capable of processing 10,000 transactions per second while maintaining 99.99% accuracy in fraud detection..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What was the state of technology/knowledge at the start? (baseline)</label>
+                        <textarea id="gen-baseline" placeholder="e.g., Existing fraud detection systems could only process 1,000 transactions per second with 95% accuracy. Published literature showed no solutions for real-time processing at this scale..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What specific advancement were you seeking beyond this baseline?</label>
+                        <textarea id="gen-advancement" placeholder="e.g., The advancement sought was a novel algorithm architecture that could achieve 10x throughput improvement while increasing accuracy to 99.99%..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Why couldn't this be achieved using standard practice or existing knowledge?</label>
+                        <textarea id="gen-why-not-standard" placeholder="e.g., Standard approaches using rule-based systems or traditional ML models could not scale to the required throughput. No published methods addressed the combination of speed and accuracy requirements..."></textarea>
+                    </div>
+                </section>
+
+                <!-- Line 244 Questions -->
+                <section class="form-section">
+                    <h3>❓ Line 244 - Technological Uncertainties</h3>
+                    <p class="section-help">Describe the specific uncertainties that could not be resolved through standard practice.</p>
+
+                    <div class="form-group">
+                        <label>What were the main technological uncertainties at the project outset?</label>
+                        <textarea id="gen-uncertainties" placeholder="List 2-4 specific uncertainties, e.g.:&#10;1. It was uncertain whether the proposed neural network architecture could maintain accuracy at high throughput&#10;2. It was unknown if the system could be trained on streaming data without catastrophic forgetting..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Why couldn't a competent professional resolve these uncertainties using existing knowledge?</label>
+                        <textarea id="gen-why-uncertain" placeholder="e.g., A review of academic literature and industry publications revealed no documented solutions. Consultation with domain experts confirmed that no known methodology existed to address these challenges..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What hypotheses did you formulate to address these uncertainties?</label>
+                        <textarea id="gen-hypotheses" placeholder="e.g.:&#10;H1: A hybrid architecture combining attention mechanisms with gradient boosting could achieve the required accuracy&#10;H2: Incremental learning techniques could enable real-time model updates without performance degradation..."></textarea>
+                    </div>
+                </section>
+
+                <!-- Line 246 Questions -->
+                <section class="form-section">
+                    <h3>🔬 Line 246 - Work Performed</h3>
+                    <p class="section-help">Describe the systematic investigation conducted to address the uncertainties.</p>
+
+                    <div class="form-group">
+                        <label>What experiments/tests did you design and conduct?</label>
+                        <textarea id="gen-experiments" placeholder="e.g.:&#10;- Designed benchmark tests to evaluate 5 different neural architectures&#10;- Conducted A/B testing on synthetic datasets with varying transaction volumes&#10;- Performed stress tests to measure accuracy degradation under load..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What iterations/modifications were made based on results?</label>
+                        <textarea id="gen-iterations" placeholder="e.g.:&#10;- Initial tests showed Architecture A failed at 5,000 TPS - modified to include batch processing&#10;- Second iteration improved throughput but reduced accuracy - implemented attention layer&#10;- Third iteration achieved targets but had memory issues - optimized data structures..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What were the results and conclusions?</label>
+                        <textarea id="gen-results" placeholder="e.g.: After 6 iterations, the final architecture achieved 12,000 TPS with 99.97% accuracy. The key technological advancement was the novel combination of..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Who performed the work? (roles, not names)</label>
+                        <textarea id="gen-personnel" placeholder="e.g.: Senior Software Engineers, Machine Learning Specialists, Data Scientists, QA Engineers"></textarea>
+                    </div>
+                </section>
+
+                <button type="button" class="primary-btn" onclick="generateReport()">✍️ Generate T661 Descriptions</button>
+            </form>
+
+            <div id="generated-report" class="results-section" style="display: none;"></div>
+        </div>
+
+        <!-- AI WRITER TAB -->
+        <div id="ai-tab" class="tab-content">
+            <div class="intro-card">
+                <h2>🤖 AI-Powered T661 Report Writer</h2>
+                <p>Use a fine-tuned AI model to generate, improve, and polish your SR&ED project descriptions. The AI writes CRA-compliant language automatically.</p>
+                <div id="ai-status" class="ai-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Checking AI server...</span>
+                </div>
+            </div>
+
+            <!-- AI Mode Selector -->
+            <div class="ai-mode-selector">
+                <button class="ai-mode-btn active" data-mode="generate" onclick="setAIMode('generate')">✨ Generate New</button>
+                <button class="ai-mode-btn" data-mode="improve" onclick="setAIMode('improve')">🔧 Improve Existing</button>
+            </div>
+
+            <!-- GENERATE MODE -->
+            <div id="ai-generate-mode" class="ai-mode-content active">
+                <section class="form-section">
+                    <h3>📋 Quick Project Description</h3>
+                    <p class="section-help">Provide a brief description and the AI will generate full T661-compliant narratives.</p>
+
+                    <div class="form-group">
+                        <label>Project Title</label>
+                        <input type="text" id="ai-title" placeholder="e.g., Development of Advanced ML Algorithm for Fraud Detection">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Industry/Field</label>
+                        <select id="ai-field">
+                            <option value="">Select...</option>
+                            <option value="software">Software Development</option>
+                            <option value="manufacturing">Manufacturing</option>
+                            <option value="biotech">Biotechnology/Life Sciences</option>
+                            <option value="cleantech">Clean Technology/Environmental</option>
+                            <option value="aerospace">Aerospace/Defense</option>
+                            <option value="electronics">Electronics/Hardware</option>
+                            <option value="materials">Materials Science</option>
+                            <option value="food">Food Science/Agriculture</option>
+                            <option value="medical">Medical Devices/Healthcare</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>What was the project about? (plain language summary)</label>
+                        <textarea id="ai-summary" rows="4" placeholder="Describe your project in plain language. What were you trying to build or achieve? What made it technically challenging? What experiments did you run?&#10;&#10;Example: We tried to build a machine learning system that could detect fraud in real-time at 10,000 transactions per second with 99.9% accuracy. Existing systems could only do 2,000 TPS. We tested 5 different neural network architectures and had to develop a custom feature extraction pipeline..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Which sections to generate?</label>
+                        <select id="ai-section">
+                            <option value="all">All Sections (242, 244, 246)</option>
+                            <option value="242">Line 242 - Technological Advancement</option>
+                            <option value="244">Line 244 - Technological Uncertainty</option>
+                            <option value="246">Line 246 - Work Performed</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Optional Details (Collapsible) -->
+                <details class="form-section collapsible-section">
+                    <summary><h3>🎯 Optional: Detailed Inputs (for better results)</h3></summary>
+
+                    <div class="form-group">
+                        <label>Technological Objective</label>
+                        <textarea id="ai-objective" rows="3" placeholder="What was the specific technological goal?"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Baseline / State of Technology</label>
+                        <textarea id="ai-baseline" rows="3" placeholder="What existed before your project? What were the limitations?"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Specific Uncertainties</label>
+                        <textarea id="ai-uncertainties" rows="3" placeholder="List 2-4 specific things you didn't know would work"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Experiments / Tests Performed</label>
+                        <textarea id="ai-experiments" rows="3" placeholder="What experiments did you design and run?"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Results / Conclusions</label>
+                        <textarea id="ai-results" rows="3" placeholder="What were the outcomes?"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Personnel (roles, not names)</label>
+                        <input type="text" id="ai-personnel" placeholder="e.g., Senior Software Engineers, ML Specialists">
+                    </div>
+                </details>
+
+                <button class="primary-btn ai-btn" onclick="aiGenerate()">
+                    🤖 Generate T661 Report
+                </button>
+            </div>
+
+            <!-- IMPROVE MODE -->
+            <div id="ai-improve-mode" class="ai-mode-content">
+                <section class="form-section">
+                    <h3>🔧 Improve Existing Text</h3>
+                    <p class="section-help">Paste your existing T661 description and the AI will improve it for CRA compliance.</p>
+
+                    <div class="form-group">
+                        <label>Which section is this?</label>
+                        <select id="ai-improve-section">
+                            <option value="242">Line 242 - Technological Advancement</option>
+                            <option value="244">Line 244 - Technological Uncertainty</option>
+                            <option value="246">Line 246 - Work Performed</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Paste Your Existing Text</label>
+                        <textarea id="ai-improve-text" rows="10" placeholder="Paste your current T661 description here. The AI will rewrite it with stronger SR&ED language, proper terminology, and better CRA compliance..."></textarea>
+                    </div>
+                </section>
+
+                <button class="primary-btn ai-btn" onclick="aiImprove()">
+                    🔧 Improve Text
+                </button>
+            </div>
+
+            <!-- AI Results -->
+            <div id="ai-results-container" class="results-section" style="display: none;"></div>
+
+            <!-- Loading Overlay -->
+            <div id="ai-loading" class="ai-loading" style="display: none;">
+                <div class="ai-loading-content">
+                    <div class="ai-spinner"></div>
+                    <p>Generating your SR&ED report...</p>
+                    <p class="ai-loading-sub">This may take 10-30 seconds</p>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Based on CRA SR&ED guidelines | For informational purposes only | Consult an SR&ED professional</p>
+        </footer>
+    </div>
+
+    <script src="checker.js"></script>
+</body>
+</html>
