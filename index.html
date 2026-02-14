@@ -19,6 +19,18 @@
             <button class="tab-btn" data-tab="ai">🤖 AI Writer</button>
         </div>
 
+        <!-- Server Connection Bar -->
+        <div id="server-bar" class="server-bar">
+            <div class="server-bar-left">
+                <span id="server-status-dot" class="status-dot offline"></span>
+                <span id="server-status-label">Not connected</span>
+            </div>
+            <div class="server-bar-right">
+                <input type="text" id="server-url-input" class="server-url-input" placeholder="Server URL (e.g. https://abc.trycloudflare.com)" value="">
+                <button class="server-connect-btn" onclick="connectToServer()">Connect</button>
+            </div>
+        </div>
+
         <!-- CHECKER TAB -->
         <div id="checker-tab" class="tab-content active">
             <div class="intro-card">

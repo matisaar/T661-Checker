@@ -594,28 +594,70 @@ function copyAllText() {
 // AI WRITER TAB
 // ============================================
 
-const AI_SERVER_URL = 'http://localhost:5000';
+const AI_SERVER_URL = localStorage.getItem('sred_server_url') || 'http://localhost:5000';
 let aiServerOnline = false;
 
 // Check AI server status on load
-async function checkAIServer() {
+async function checkAIServer(customUrl) {
+    const url = customUrl || AI_SERVER_URL;
     const statusDiv = document.getElementById('ai-status');
-    if (!statusDiv) return;
+    const barDot = document.getElementById('server-status-dot');
+    const barLabel = document.getElementById('server-status-label');
 
     try {
-        const response = await fetch(`${AI_SERVER_URL}/health`, { signal: AbortSignal.timeout(3000) });
+        const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
         const data = await response.json();
 
         if (data.status === 'ok') {
             aiServerOnline = true;
             const mode = data.model_loaded ? 'AI Model' : 'Template Mode';
             const modeClass = data.model_loaded ? 'online' : 'template';
-            statusDiv.innerHTML = `<span class="status-dot ${modeClass}"></span><span class="status-text">Server Online - ${mode}</span>`;
+            const fbCount = data.feedback_count || 0;
+
+            if (statusDiv) {
+                statusDiv.innerHTML = `<span class="status-dot ${modeClass}"></span><span class="status-text">Server Online - ${mode} | ${fbCount} ratings stored</span>`;
+            }
+            if (barDot) {
+                barDot.className = `status-dot ${modeClass}`;
+                barLabel.textContent = `Connected - ${mode} (${fbCount} ratings)`;
+            }
+
+            // Sync any local feedback to server
+            syncFeedbackToServer();
         }
     } catch (e) {
         aiServerOnline = false;
-        statusDiv.innerHTML = `<span class="status-dot offline"></span><span class="status-text">AI Server Offline - Using built-in templates. <a href="#" onclick="showSetupHelp()">Setup Guide</a></span>`;
+        if (statusDiv) {
+            statusDiv.innerHTML = `<span class="status-dot offline"></span><span class="status-text">AI Server Offline - feedback saved locally. <a href="#" onclick="showSetupHelp()">Setup Guide</a></span>`;
+        }
+        if (barDot) {
+            barDot.className = 'status-dot offline';
+            barLabel.textContent = 'Not connected - feedback saved locally';
+        }
     }
+}
+
+function connectToServer() {
+    let url = document.getElementById('server-url-input').value.trim();
+    if (!url) {
+        url = 'http://localhost:5000';
+    }
+    // Remove trailing slash
+    url = url.replace(/\/+$/, '');
+    // Add https if no protocol
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+
+    localStorage.setItem('sred_server_url', url);
+    // Update the global
+    window._sredServerUrl = url;
+    document.getElementById('server-url-input').value = url;
+    checkAIServer(url);
+}
+
+function getServerUrl() {
+    return window._sredServerUrl || localStorage.getItem('sred_server_url') || 'http://localhost:5000';
 }
 
 function showSetupHelp() {
@@ -680,9 +722,10 @@ async function aiGenerate() {
 
     try {
         let result;
+        const serverUrl = getServerUrl();
 
         if (aiServerOnline) {
-            const response = await fetch(`${AI_SERVER_URL}/generate`, {
+            const response = await fetch(`${serverUrl}/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ section, project: projectData }),
@@ -796,7 +839,7 @@ async function aiImprove() {
         let improved;
 
         if (aiServerOnline) {
-            const response = await fetch(`${AI_SERVER_URL}/improve`, {
+            const response = await fetch(`${getServerUrl()}/improve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text, section }),
@@ -899,6 +942,49 @@ let currentGenerationId = 0;
 function saveFeedback() {
     localStorage.setItem('sred_feedback', JSON.stringify(feedbackStore));
     updateFeedbackBadge();
+    // Also push to remote server if connected
+    pushLatestFeedbackToServer();
+}
+
+async function pushLatestFeedbackToServer() {
+    if (!aiServerOnline) return;
+    const latest = feedbackStore[feedbackStore.length - 1];
+    if (!latest) return;
+    try {
+        await fetch(`${getServerUrl()}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(latest),
+        });
+    } catch (e) {
+        // Silent fail - feedback is saved locally
+    }
+}
+
+async function syncFeedbackToServer() {
+    if (!aiServerOnline) return;
+    const serverUrl = getServerUrl();
+    try {
+        // Get count from server
+        const resp = await fetch(`${serverUrl}/feedback`, { signal: AbortSignal.timeout(3000) });
+        const data = await resp.json();
+        const serverCount = data.count || 0;
+        const localCount = feedbackStore.length;
+
+        // If we have more locally, push all to server
+        if (localCount > serverCount) {
+            for (const fb of feedbackStore) {
+                await fetch(`${serverUrl}/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fb),
+                });
+            }
+            console.log(`Synced ${localCount} feedback items to server`);
+        }
+    } catch (e) {
+        console.log('Feedback sync skipped:', e.message);
+    }
 }
 
 function updateFeedbackBadge() {
@@ -1207,6 +1293,14 @@ function copyAllAIText() {
 }
 
 // Check server on page load
-setTimeout(checkAIServer, 500);
+setTimeout(() => {
+    const savedUrl = localStorage.getItem('sred_server_url');
+    if (savedUrl) {
+        const input = document.getElementById('server-url-input');
+        if (input) input.value = savedUrl;
+        window._sredServerUrl = savedUrl;
+    }
+    checkAIServer(savedUrl || undefined);
+}, 500);
 
 console.log('SR&ED Report Checker & Generator loaded');

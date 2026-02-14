@@ -16,6 +16,9 @@ from urllib.parse import urlparse, parse_qs
 PORT = 5000
 MODEL_PATH = os.environ.get("SRED_MODEL_PATH", "./ai/output/sred-mistral-7b-qlora/merged")
 USE_GPU = os.environ.get("SRED_USE_GPU", "true").lower() == "true"
+FEEDBACK_FILE = os.environ.get("SRED_FEEDBACK_FILE", "./ai/dataset/feedback.jsonl")
+DPO_FILE = os.environ.get("SRED_DPO_FILE", "./ai/dataset/sred_dpo_feedback.jsonl")
+SFT_FILE = os.environ.get("SRED_SFT_FILE", "./ai/dataset/sred_sft_feedback.jsonl")
 
 # ============================================
 # Model Loading (lazy - only when needed)
@@ -282,20 +285,27 @@ class SREDHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         if parsed.path == "/health":
+            feedback_count = count_feedback()
             self._send_json({
                 "status": "ok",
                 "model_loaded": model_loaded,
                 "model_error": model_error,
                 "mode": "ai" if model_loaded else "template",
+                "feedback_count": feedback_count,
             })
+        elif parsed.path == "/feedback":
+            self._handle_get_feedback()
         elif parsed.path == "/":
             self._send_json({
                 "name": "SR&ED Report AI Server",
                 "version": "1.0.0",
                 "endpoints": {
-                    "GET /health": "Server and model status",
+                    "GET  /health": "Server and model status",
+                    "GET  /feedback": "Get all stored feedback",
                     "POST /generate": "Generate T661 descriptions",
                     "POST /improve": "Improve existing T661 text",
+                    "POST /feedback": "Submit paragraph feedback",
+                    "POST /feedback/export": "Export feedback as DPO/SFT training data",
                 },
             })
         else:
@@ -316,6 +326,10 @@ class SREDHandler(BaseHTTPRequestHandler):
             self._handle_generate(data)
         elif parsed.path == "/improve":
             self._handle_improve(data)
+        elif parsed.path == "/feedback":
+            self._handle_submit_feedback(data)
+        elif parsed.path == "/feedback/export":
+            self._handle_export_feedback()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -395,6 +409,46 @@ class SREDHandler(BaseHTTPRequestHandler):
 
         return result
 
+    def _handle_get_feedback(self):
+        """Return all stored feedback."""
+        feedback = load_all_feedback()
+        self._send_json({"success": True, "feedback": feedback, "count": len(feedback)})
+
+    def _handle_submit_feedback(self, data):
+        """Receive and store feedback from phone/browser."""
+        entries = data.get("entries", [])
+        single = data.get("entry", None)
+
+        if single:
+            entries = [single]
+
+        if not entries:
+            self._send_json({"error": "No feedback entries provided"}, 400)
+            return
+
+        for entry in entries:
+            append_feedback(entry)
+
+        total = count_feedback()
+        print(f"[FEEDBACK] Received {len(entries)} rating(s). Total stored: {total}")
+        self._send_json({"success": True, "received": len(entries), "total": total})
+
+    def _handle_export_feedback(self):
+        """Export feedback as DPO and SFT training files."""
+        try:
+            result = export_dpo_and_sft()
+            print(f"[EXPORT] Exported {result['dpo']} DPO pairs, {result['sft']} SFT examples")
+            self._send_json({
+                "success": True,
+                "dpo_pairs": result["dpo"],
+                "sft_examples": result["sft"],
+                "total_feedback": result["total"],
+                "dpo_file": DPO_FILE,
+                "sft_file": SFT_FILE,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _send_json(self, data, status=200):
         self.send_response(status)
         self._set_cors_headers()
@@ -409,6 +463,94 @@ class SREDHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         print(f"[SRED-API] {args[0]} {args[1]} {args[2]}")
+
+
+# ============================================
+# Feedback Storage & Export
+# ============================================
+
+def count_feedback():
+    """Count feedback entries in the file."""
+    if not os.path.exists(FEEDBACK_FILE):
+        return 0
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
+
+
+def load_all_feedback():
+    """Load all feedback from file."""
+    if not os.path.exists(FEEDBACK_FILE):
+        return []
+    entries = []
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return entries
+
+
+def append_feedback(entry):
+    """Append a single feedback entry to file."""
+    os.makedirs(os.path.dirname(FEEDBACK_FILE), exist_ok=True)
+    with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def export_dpo_and_sft():
+    """Convert raw feedback into DPO pairs and SFT examples."""
+    feedback = load_all_feedback()
+    if not feedback:
+        return {"dpo": 0, "sft": 0, "total": 0}
+
+    # Group by generation + section
+    groups = {}
+    for fb in feedback:
+        key = f"{fb.get('genId', '')}_{fb.get('section', '')}"
+        if key not in groups:
+            groups[key] = {"prompt": fb.get("prompt", ""), "section": fb.get("section", ""), "items": []}
+        groups[key]["items"].append(fb)
+
+    dpo_data = []
+    sft_data = []
+
+    for group in groups.values():
+        up_paras = [i["paraText"] for i in group["items"] if i.get("rating") == "up"]
+        down_paras = [i["paraText"] for i in group["items"] if i.get("rating") == "down"]
+
+        prompt_text = f"Write a T661 {group['section']} description for: {group['prompt']}"
+
+        if up_paras and down_paras:
+            dpo_data.append({
+                "prompt": prompt_text,
+                "chosen": "\n\n".join(up_paras),
+                "rejected": "\n\n".join(down_paras),
+            })
+        if up_paras:
+            sft_data.append({
+                "conversations": [
+                    {"from": "system", "value": "You are an expert SR&ED report writer specializing in CRA T661 form project descriptions."},
+                    {"from": "human", "value": prompt_text},
+                    {"from": "gpt", "value": "\n\n".join(up_paras)},
+                ],
+                "source": "user_feedback_positive",
+            })
+
+    # Write files
+    os.makedirs(os.path.dirname(DPO_FILE), exist_ok=True)
+
+    with open(DPO_FILE, "w", encoding="utf-8") as f:
+        for d in dpo_data:
+            f.write(json.dumps(d) + "\n")
+
+    with open(SFT_FILE, "w", encoding="utf-8") as f:
+        for s in sft_data:
+            f.write(json.dumps(s) + "\n")
+
+    return {"dpo": len(dpo_data), "sft": len(sft_data), "total": len(feedback)}
 
 
 # ============================================
@@ -434,10 +576,17 @@ def main():
 
     print(f"\nStarting server on http://localhost:{PORT}")
     print(f"Endpoints:")
-    print(f"  GET  /health   - Server status")
-    print(f"  POST /generate - Generate T661 descriptions")
-    print(f"  POST /improve  - Improve existing text")
+    print(f"  GET  /health           - Server status")
+    print(f"  GET  /feedback         - Get all feedback")
+    print(f"  POST /generate         - Generate T661 descriptions")
+    print(f"  POST /improve          - Improve existing text")
+    print(f"  POST /feedback         - Submit feedback from phone/browser")
+    print(f"  POST /feedback/export   - Export DPO/SFT training data")
     print()
+    print(f"  To access from phone, run:")
+    print(f"    npx cloudflared tunnel --url http://localhost:{PORT}")
+    print(f"  Or use ngrok:")
+    print(f"    ngrok http {PORT}")
 
     server = HTTPServer(("0.0.0.0", PORT), SREDHandler)
 

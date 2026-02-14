@@ -41,9 +41,68 @@ header h1 {
 .tabs {
     display: flex;
     gap: 10px;
-    margin-bottom: 30px;
+    margin-bottom: 10px;
     border-bottom: 1px solid #2f3336;
     padding-bottom: 0;
+}
+
+/* Server Connection Bar */
+.server-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1a1f25;
+    border: 1px solid #2f3336;
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin-bottom: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.server-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    color: #a0a8b0;
+}
+
+.server-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.server-url-input {
+    background: #0f1419;
+    border: 1px solid #2f3336;
+    color: #e7e9ea;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.85em;
+    width: 320px;
+    outline: none;
+}
+
+.server-url-input:focus {
+    border-color: #1d9bf0;
+}
+
+.server-connect-btn {
+    background: #1d9bf0;
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+
+.server-connect-btn:hover {
+    background: #1a8cd8;
 }
 
 .tab-btn {
