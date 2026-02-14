@@ -21,3 +21,4 @@ desktop.ini
 # Exported feedback (user-specific)
 sred_dpo_feedback.jsonl
 sred_sft_feedback.jsonl
+.vercel
