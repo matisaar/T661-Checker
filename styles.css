@@ -656,6 +656,41 @@ footer {
     display: block;
 }
 
+/* Random Generator Controls */
+.random-gen-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.random-gen-controls .ai-btn {
+    font-size: 1.15em;
+    padding: 16px 36px;
+    white-space: nowrap;
+}
+
+.fb-stats-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 0.95em;
+    color: #a0a8b0;
+    flex-wrap: wrap;
+}
+
+.fb-stats-bar span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.small-btn {
+    font-size: 0.82em !important;
+    padding: 6px 12px !important;
+}
+
 /* Collapsible Section */
 .collapsible-section summary {
     cursor: pointer;

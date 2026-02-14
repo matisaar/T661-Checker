@@ -180,128 +180,25 @@
         <!-- AI WRITER TAB -->
         <div id="ai-tab" class="tab-content">
             <div class="intro-card">
-                <h2>🤖 AI-Powered T661 Report Writer</h2>
-                <p>Use a fine-tuned AI model to generate, improve, and polish your SR&ED project descriptions. The AI writes CRA-compliant language automatically.</p>
+                <h2>🤖 T661 Training - Rate Random Reports</h2>
+                <p>Generate random T661 reports and rate each paragraph with 👍/👎. Your feedback trains the AI to write better SR&ED descriptions.</p>
                 <div id="ai-status" class="ai-status">
                     <span class="status-dot"></span>
                     <span class="status-text">Checking AI server...</span>
                 </div>
             </div>
 
-            <!-- AI Mode Selector -->
-            <div class="ai-mode-selector">
-                <button class="ai-mode-btn active" data-mode="generate" onclick="setAIMode('generate')">✨ Generate New</button>
-                <button class="ai-mode-btn" data-mode="improve" onclick="setAIMode('improve')">🔧 Improve Existing</button>
-            </div>
-
-            <!-- GENERATE MODE -->
-            <div id="ai-generate-mode" class="ai-mode-content active">
-                <section class="form-section">
-                    <h3>📋 Quick Project Description</h3>
-                    <p class="section-help">Provide a brief description and the AI will generate full T661-compliant narratives.</p>
-
-                    <div class="form-group">
-                        <label>Project Title</label>
-                        <input type="text" id="ai-title" placeholder="e.g., Development of Advanced ML Algorithm for Fraud Detection">
-                    </div>
-
-                    <div class="form-group">
-                        <label>Industry/Field</label>
-                        <select id="ai-field">
-                            <option value="">Select...</option>
-                            <option value="software">Software Development</option>
-                            <option value="manufacturing">Manufacturing</option>
-                            <option value="biotech">Biotechnology/Life Sciences</option>
-                            <option value="cleantech">Clean Technology/Environmental</option>
-                            <option value="aerospace">Aerospace/Defense</option>
-                            <option value="electronics">Electronics/Hardware</option>
-                            <option value="materials">Materials Science</option>
-                            <option value="food">Food Science/Agriculture</option>
-                            <option value="medical">Medical Devices/Healthcare</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>What was the project about? (plain language summary)</label>
-                        <textarea id="ai-summary" rows="4" placeholder="Describe your project in plain language. What were you trying to build or achieve? What made it technically challenging? What experiments did you run?&#10;&#10;Example: We tried to build a machine learning system that could detect fraud in real-time at 10,000 transactions per second with 99.9% accuracy. Existing systems could only do 2,000 TPS. We tested 5 different neural network architectures and had to develop a custom feature extraction pipeline..."></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Which sections to generate?</label>
-                        <select id="ai-section">
-                            <option value="all">All Sections (242, 244, 246)</option>
-                            <option value="242">Line 242 - Technological Advancement</option>
-                            <option value="244">Line 244 - Technological Uncertainty</option>
-                            <option value="246">Line 246 - Work Performed</option>
-                        </select>
-                    </div>
-                </section>
-
-                <!-- Optional Details (Collapsible) -->
-                <details class="form-section collapsible-section">
-                    <summary><h3>🎯 Optional: Detailed Inputs (for better results)</h3></summary>
-
-                    <div class="form-group">
-                        <label>Technological Objective</label>
-                        <textarea id="ai-objective" rows="3" placeholder="What was the specific technological goal?"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Baseline / State of Technology</label>
-                        <textarea id="ai-baseline" rows="3" placeholder="What existed before your project? What were the limitations?"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Specific Uncertainties</label>
-                        <textarea id="ai-uncertainties" rows="3" placeholder="List 2-4 specific things you didn't know would work"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Experiments / Tests Performed</label>
-                        <textarea id="ai-experiments" rows="3" placeholder="What experiments did you design and run?"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Results / Conclusions</label>
-                        <textarea id="ai-results" rows="3" placeholder="What were the outcomes?"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Personnel (roles, not names)</label>
-                        <input type="text" id="ai-personnel" placeholder="e.g., Senior Software Engineers, ML Specialists">
-                    </div>
-                </details>
-
-                <button class="primary-btn ai-btn" onclick="aiGenerate()">
-                    🤖 Generate T661 Report
+            <div class="random-gen-controls">
+                <button class="primary-btn ai-btn" onclick="generateRandomT661()" id="random-gen-btn">
+                    🎲 Generate Random T661
                 </button>
-            </div>
-
-            <!-- IMPROVE MODE -->
-            <div id="ai-improve-mode" class="ai-mode-content">
-                <section class="form-section">
-                    <h3>🔧 Improve Existing Text</h3>
-                    <p class="section-help">Paste your existing T661 description and the AI will improve it for CRA compliance.</p>
-
-                    <div class="form-group">
-                        <label>Which section is this?</label>
-                        <select id="ai-improve-section">
-                            <option value="242">Line 242 - Technological Advancement</option>
-                            <option value="244">Line 244 - Technological Uncertainty</option>
-                            <option value="246">Line 246 - Work Performed</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Paste Your Existing Text</label>
-                        <textarea id="ai-improve-text" rows="10" placeholder="Paste your current T661 description here. The AI will rewrite it with stronger SR&ED language, proper terminology, and better CRA compliance..."></textarea>
-                    </div>
-                </section>
-
-                <button class="primary-btn ai-btn" onclick="aiImprove()">
-                    🔧 Improve Text
-                </button>
+                <div class="fb-stats-bar">
+                    <span>👍 <span id="stat-up">0</span></span>
+                    <span>👎 <span id="stat-down">0</span></span>
+                    <span>Total: <span id="stat-total">0</span></span>
+                    <button class="secondary-btn small-btn" onclick="exportFeedbackAsDPO()">📊 Export Feedback</button>
+                    <button class="secondary-btn small-btn" onclick="clearFeedback()">🗑️ Clear</button>
+                </div>
             </div>
 
             <!-- AI Results -->
@@ -311,8 +208,8 @@
             <div id="ai-loading" class="ai-loading" style="display: none;">
                 <div class="ai-loading-content">
                     <div class="ai-spinner"></div>
-                    <p>Generating your SR&ED report...</p>
-                    <p class="ai-loading-sub">This may take 10-30 seconds</p>
+                    <p>Generating T661 report...</p>
+                    <p class="ai-loading-sub">Picking a random project scenario</p>
                 </div>
             </div>
         </div>
