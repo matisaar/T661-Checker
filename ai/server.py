@@ -292,6 +292,7 @@ class SREDHandler(BaseHTTPRequestHandler):
                 "model_error": model_error,
                 "mode": "ai" if model_loaded else "template",
                 "feedback_count": feedback_count,
+                "trained_count": feedback_count,
             })
         elif parsed.path == "/feedback":
             self._handle_get_feedback()
@@ -412,15 +413,28 @@ class SREDHandler(BaseHTTPRequestHandler):
     def _handle_get_feedback(self):
         """Return all stored feedback."""
         feedback = load_all_feedback()
-        self._send_json({"success": True, "feedback": feedback, "count": len(feedback)})
+        para_count = sum(1 for f in feedback if f.get("type", "paragraph") == "paragraph")
+        word_count = sum(1 for f in feedback if f.get("type") == "word")
+        self._send_json({
+            "success": True,
+            "feedback": feedback,
+            "count": len(feedback),
+            "paragraph_count": para_count,
+            "word_count": word_count,
+            "trained_count": para_count + word_count
+        })
 
     def _handle_submit_feedback(self, data):
-        """Receive and store feedback from phone/browser."""
+        """Receive and store feedback from phone/browser. Auto-exports DPO/SFT."""
         entries = data.get("entries", [])
         single = data.get("entry", None)
 
+        # Support both {entries: [..]} and direct single entry JSON
         if single:
             entries = [single]
+        elif not entries and data.get("type"):
+            # Direct entry posted (e.g. {type: 'paragraph', genId: ...})
+            entries = [data]
 
         if not entries:
             self._send_json({"error": "No feedback entries provided"}, 400)
@@ -430,8 +444,23 @@ class SREDHandler(BaseHTTPRequestHandler):
             append_feedback(entry)
 
         total = count_feedback()
-        print(f"[FEEDBACK] Received {len(entries)} rating(s). Total stored: {total}")
-        self._send_json({"success": True, "received": len(entries), "total": total})
+        feedback_type = entries[0].get("type", "paragraph")
+        print(f"[FEEDBACK] Received {len(entries)} {feedback_type} rating(s). Total stored: {total}")
+
+        # Auto-export DPO/SFT training data on every feedback
+        try:
+            result = export_dpo_and_sft()
+            print(f"[AUTO-EXPORT] {result['dpo']} DPO pairs, {result['sft']} SFT examples")
+        except Exception as e:
+            print(f"[AUTO-EXPORT] Export failed: {e}")
+            result = {"dpo": 0, "sft": 0}
+
+        self._send_json({
+            "success": True,
+            "received": len(entries),
+            "total": total,
+            "trained_count": result.get("dpo", 0) + result.get("sft", 0)
+        })
 
     def _handle_export_feedback(self):
         """Export feedback as DPO and SFT training files."""
@@ -501,27 +530,42 @@ def append_feedback(entry):
 
 
 def export_dpo_and_sft():
-    """Convert raw feedback into DPO pairs and SFT examples."""
+    """Convert raw feedback into DPO pairs and SFT examples. Called automatically on every feedback."""
     feedback = load_all_feedback()
     if not feedback:
         return {"dpo": 0, "sft": 0, "total": 0}
 
-    # Group by generation + section
+    # Separate paragraph and word feedback
+    para_feedback = [fb for fb in feedback if fb.get("type", "paragraph") != "word"]
+    word_feedback = [fb for fb in feedback if fb.get("type") == "word"]
+
+    # Group paragraph feedback by generation + section
     groups = {}
-    for fb in feedback:
+    for fb in para_feedback:
         key = f"{fb.get('genId', '')}_{fb.get('section', '')}"
         if key not in groups:
-            groups[key] = {"prompt": fb.get("prompt", ""), "section": fb.get("section", ""), "items": []}
+            groups[key] = {"section": fb.get("section", ""), "fullText": fb.get("fullSectionText", ""), "items": []}
         groups[key]["items"].append(fb)
+
+    # Collect bad words per section for context
+    bad_words_by_section = {}
+    for w in word_feedback:
+        key = f"{w.get('genId', '')}_{w.get('section', '')}"
+        if key not in bad_words_by_section:
+            bad_words_by_section[key] = []
+        bad_words_by_section[key].append(w.get("word", ""))
 
     dpo_data = []
     sft_data = []
 
-    for group in groups.values():
+    for gkey, group in groups.items():
         up_paras = [i["paraText"] for i in group["items"] if i.get("rating") == "up"]
         down_paras = [i["paraText"] for i in group["items"] if i.get("rating") == "down"]
+        bad_words = bad_words_by_section.get(gkey, [])
 
-        prompt_text = f"Write a T661 {group['section']} description for: {group['prompt']}"
+        prompt_text = f"Write a T661 {group['section']} description."
+        if bad_words:
+            prompt_text += f" Avoid using these words/phrases: {', '.join(set(bad_words))}"
 
         if up_paras and down_paras:
             dpo_data.append({

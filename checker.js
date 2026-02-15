@@ -1,685 +1,42 @@
 /**
- * SR&ED Report Checker & Generator
- * Analyzes T661 descriptions against CRA requirements
+ * T661 AI Trainer
+ * Generate random T661 reports and rate them to train the AI model.
+ * Paragraph-level thumbs up/down + word-level click-to-mark-bad.
+ * All feedback auto-saves to the server for DPO/SFT training.
  */
 
 // ============================================
-// CRA COMPLIANCE RULES & KEYWORDS
+// CONFIGURATION & STATE
 // ============================================
 
-const COMPLIANCE_RULES = {
-    advancement: {
-        name: "Line 242 - Technological Advancement",
-        requiredElements: [
-            { name: "Objective Statement", patterns: ["objective", "goal", "aim", "sought to", "attempting to", "develop", "create", "achieve"], weight: 20 },
-            { name: "Baseline/State of Art", patterns: ["existing", "current", "baseline", "state of", "prior to", "before this", "previously", "standard practice", "conventional"], weight: 25 },
-            { name: "Advancement Description", patterns: ["advancement", "advance", "new", "novel", "innovative", "beyond", "improve", "enhance", "increase", "breakthrough"], weight: 25 },
-            { name: "Beyond Standard Practice", patterns: ["could not", "unable", "not possible", "no existing", "not available", "limitations", "beyond standard", "not achievable"], weight: 20 },
-            { name: "Technical Specificity", patterns: ["algorithm", "system", "process", "method", "technique", "architecture", "design", "mechanism", "protocol", "framework"], weight: 10 }
-        ],
-        redFlags: [
-            { pattern: "new product", issue: "Focus on 'technological advancement' not 'new product'" },
-            { pattern: "market", issue: "Market considerations are not technological advancements" },
-            { pattern: "cost sav", issue: "Cost savings alone are not technological advancements" },
-            { pattern: "first time", issue: "'First time for the company' is not a valid advancement" },
-            { pattern: "business", issue: "Business objectives should be separated from technological objectives" }
-        ],
-        minWords: 200,
-        maxWords: 800
-    },
-    uncertainty: {
-        name: "Line 244 - Technological Uncertainty",
-        requiredElements: [
-            { name: "Uncertainty Statement", patterns: ["uncertain", "unknown", "unclear", "not known", "could not determine", "unpredictable", "it was uncertain", "it was unknown"], weight: 25 },
-            { name: "Technical Nature", patterns: ["technical", "technological", "scientific", "engineering", "algorithm", "system", "process", "mechanism"], weight: 20 },
-            { name: "Why Not Resolvable", patterns: ["competent professional", "standard practice", "routine", "existing knowledge", "publicly available", "literature", "experts"], weight: 25 },
-            { name: "Specific Uncertainties", patterns: ["whether", "how to", "if", "what", "which approach", "feasibility", "achievable", "possible"], weight: 20 },
-            { name: "Hypotheses", patterns: ["hypothes", "theoriz", "propos", "assum", "predict", "expect"], weight: 10 }
-        ],
-        redFlags: [
-            { pattern: "business uncertain", issue: "Business uncertainty is not eligible - must be technological" },
-            { pattern: "cost uncertain", issue: "Cost uncertainty is not eligible - must be technological" },
-            { pattern: "schedule", issue: "Schedule/timeline uncertainty is not eligible" },
-            { pattern: "market uncertain", issue: "Market uncertainty is not eligible" },
-            { pattern: "will it sell", issue: "Commercial viability is not a technological uncertainty" }
-        ],
-        minWords: 200,
-        maxWords: 800
-    },
-    work: {
-        name: "Line 246 - Work Performed",
-        requiredElements: [
-            { name: "Systematic Approach", patterns: ["systematic", "methodical", "structured", "planned", "designed experiment", "test plan", "methodology"], weight: 20 },
-            { name: "Experiments/Testing", patterns: ["experiment", "test", "trial", "prototype", "simulation", "analysis", "evaluation", "benchmark", "validation"], weight: 25 },
-            { name: "Iterations/Modifications", patterns: ["iteration", "modified", "revised", "adjusted", "refined", "improved", "changed", "attempt", "version"], weight: 20 },
-            { name: "Results/Analysis", patterns: ["result", "found", "discovered", "determined", "concluded", "showed", "demonstrated", "revealed", "indicated", "achieved"], weight: 20 },
-            { name: "Personnel Involvement", patterns: ["engineer", "scientist", "developer", "researcher", "specialist", "technician", "team", "personnel"], weight: 15 }
-        ],
-        redFlags: [
-            { pattern: "routine", issue: "Routine activities are not eligible SR&ED" },
-            { pattern: "quality control", issue: "Quality control is explicitly excluded from SR&ED" },
-            { pattern: "production", issue: "Production activities are not eligible" },
-            { pattern: "data collection only", issue: "Data collection alone is not SR&ED unless supporting eligible work" },
-            { pattern: "style change", issue: "Style changes are excluded from SR&ED" }
-        ],
-        minWords: 300,
-        maxWords: 1200
-    }
-};
-
-const STRONG_PHRASES = [
-    "technological advancement",
-    "scientific advancement", 
-    "technological uncertainty",
-    "systematic investigation",
-    "hypothesis",
-    "experiment",
-    "competent professional",
-    "standard practice",
-    "state of technology",
-    "baseline",
-    "iterations",
-    "test results"
-];
-
-const WEAK_PHRASES = [
-    "we wanted to",
-    "we needed to",
-    "to save money",
-    "to reduce costs",
-    "customer requested",
-    "to be competitive",
-    "new to the company",
-    "first time we",
-    "trial and error",
-    "troubleshooting"
-];
+let aiServerOnline = false;
+let feedbackStore = JSON.parse(localStorage.getItem('sred_feedback') || '[]');
+let badWordsStore = JSON.parse(localStorage.getItem('sred_bad_words') || '[]');
+let currentGenerationId = parseInt(localStorage.getItem('sred_gen_id') || '0');
 
 // ============================================
-// TAB FUNCTIONALITY
-// ============================================
-
-document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        // Update buttons
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        
-        // Update content
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
-    });
-});
-
-// ============================================
-// WORD COUNTERS
+// UTILITIES
 // ============================================
 
 function countWords(text) {
     return text.trim().split(/\s+/).filter(w => w.length > 0).length;
 }
 
-document.getElementById('check-advancement').addEventListener('input', function() {
-    document.getElementById('adv-count').textContent = countWords(this.value);
-});
-
-document.getElementById('check-uncertainty').addEventListener('input', function() {
-    document.getElementById('unc-count').textContent = countWords(this.value);
-});
-
-document.getElementById('check-work').addEventListener('input', function() {
-    document.getElementById('work-count').textContent = countWords(this.value);
-});
-
-// ============================================
-// REPORT ANALYZER
-// ============================================
-
-function analyzeReport() {
-    const advancement = document.getElementById('check-advancement').value;
-    const uncertainty = document.getElementById('check-uncertainty').value;
-    const work = document.getElementById('check-work').value;
-    
-    if (!advancement && !uncertainty && !work) {
-        alert('Please paste at least one section of your report to analyze.');
-        return;
-    }
-    
-    const results = {
-        advancement: analyzeSection(advancement, COMPLIANCE_RULES.advancement),
-        uncertainty: analyzeSection(uncertainty, COMPLIANCE_RULES.uncertainty),
-        work: analyzeSection(work, COMPLIANCE_RULES.work)
-    };
-    
-    displayAnalysisResults(results);
+function pickRandom(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function analyzeSection(text, rules) {
-    if (!text.trim()) {
-        return { score: 0, issues: [{ type: 'error', message: 'Section is empty - this is required for T661' }], status: 'fail', elements: [] };
+function shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
     }
-    
-    const textLower = text.toLowerCase();
-    const wordCount = countWords(text);
-    const issues = [];
-    const foundElements = [];
-    let totalScore = 0;
-    let maxScore = 0;
-    
-    // Check required elements
-    for (const element of rules.requiredElements) {
-        maxScore += element.weight;
-        const found = element.patterns.some(pattern => textLower.includes(pattern));
-        
-        if (found) {
-            totalScore += element.weight;
-            foundElements.push({ name: element.name, found: true });
-        } else {
-            foundElements.push({ name: element.name, found: false });
-            issues.push({
-                type: 'warning',
-                message: `Missing: <strong>${element.name}</strong> - Consider including language about: ${element.patterns.slice(0, 3).join(', ')}`
-            });
-        }
-    }
-    
-    // Check for red flags
-    for (const flag of rules.redFlags) {
-        if (textLower.includes(flag.pattern)) {
-            issues.push({
-                type: 'error',
-                message: `⚠️ Red Flag: "${flag.pattern}" - ${flag.issue}`
-            });
-            totalScore -= 10;
-        }
-    }
-    
-    // Check word count
-    if (wordCount < rules.minWords) {
-        issues.push({
-            type: 'warning',
-            message: `Too short: ${wordCount} words (recommended: ${rules.minWords}-${rules.maxWords}). Add more technical detail.`
-        });
-        totalScore -= 10;
-    } else if (wordCount > rules.maxWords) {
-        issues.push({
-            type: 'warning',
-            message: `Consider condensing: ${wordCount} words (recommended: ${rules.minWords}-${rules.maxWords})`
-        });
-    }
-    
-    // Check for strong phrases
-    const strongFound = STRONG_PHRASES.filter(phrase => textLower.includes(phrase));
-    if (strongFound.length > 0) {
-        issues.push({
-            type: 'success',
-            message: `Good: Uses strong SR&ED language: "${strongFound.slice(0, 3).join('", "')}"`
-        });
-    }
-    
-    // Check for weak phrases
-    const weakFound = WEAK_PHRASES.filter(phrase => textLower.includes(phrase));
-    if (weakFound.length > 0) {
-        issues.push({
-            type: 'warning',
-            message: `Weak language detected: "${weakFound.join('", "')}" - Consider rephrasing`
-        });
-        totalScore -= 5 * weakFound.length;
-    }
-    
-    // Calculate final score
-    const score = Math.max(0, Math.min(100, Math.round((totalScore / maxScore) * 100)));
-    
-    let status = 'pass';
-    if (score < 50) status = 'fail';
-    else if (score < 75) status = 'warning';
-    
-    return { score, issues, status, elements: foundElements, wordCount };
-}
-
-function displayAnalysisResults(results) {
-    const resultsDiv = document.getElementById('analysis-results');
-    resultsDiv.style.display = 'block';
-    
-    // Calculate overall score
-    let validSections = 0;
-    let totalScore = 0;
-    
-    for (const section of Object.values(results)) {
-        if (section.score > 0) {
-            validSections++;
-            totalScore += section.score;
-        }
-    }
-    
-    const overallScore = validSections > 0 ? Math.round(totalScore / validSections) : 0;
-    let overallStatus = 'good';
-    let overallLabel = 'Strong Report';
-    
-    if (overallScore < 50) {
-        overallStatus = 'poor';
-        overallLabel = 'Needs Work';
-    } else if (overallScore < 75) {
-        overallStatus = 'warning';
-        overallLabel = 'Moderate';
-    }
-    
-    let html = `
-        <div class="results-header">
-            <h2>📊 Analysis Results</h2>
-            <div class="overall-score">
-                <div class="score-circle ${overallStatus}">${overallScore}%</div>
-                <div class="score-label">${overallLabel}</div>
-            </div>
-        </div>
-    `;
-    
-    // Section results
-    const sections = [
-        { key: 'advancement', rules: COMPLIANCE_RULES.advancement },
-        { key: 'uncertainty', rules: COMPLIANCE_RULES.uncertainty },
-        { key: 'work', rules: COMPLIANCE_RULES.work }
-    ];
-    
-    for (const { key, rules } of sections) {
-        const result = results[key];
-        html += `
-            <div class="analysis-card">
-                <div class="analysis-card-header">
-                    <h4>${getStatusEmoji(result.status)} ${rules.name}</h4>
-                    <span class="status-badge ${result.status}">${result.score}% - ${getStatusText(result.status)}</span>
-                </div>
-                ${result.wordCount ? `<p style="color: #71767b; margin-bottom: 12px; font-size: 0.9em;">Word count: ${result.wordCount}</p>` : ''}
-                <ul class="issue-list">
-                    ${result.issues.map(issue => `
-                        <li>
-                            <span class="issue-icon ${issue.type}">${getIssueIcon(issue.type)}</span>
-                            <span class="issue-text">${issue.message}</span>
-                        </li>
-                    `).join('')}
-                </ul>
-            </div>
-        `;
-    }
-    
-    // Summary recommendations
-    html += `
-        <div class="analysis-card" style="border-color: #1d9bf0;">
-            <h4 style="color: #1d9bf0; margin-bottom: 12px;">💡 Key Recommendations</h4>
-            <ul class="issue-list">
-                ${generateRecommendations(results).map(rec => `
-                    <li>
-                        <span class="issue-icon success">→</span>
-                        <span class="issue-text">${rec}</span>
-                    </li>
-                `).join('')}
-            </ul>
-        </div>
-    `;
-    
-    resultsDiv.innerHTML = html;
-    resultsDiv.scrollIntoView({ behavior: 'smooth' });
-}
-
-function getStatusEmoji(status) {
-    return { pass: '✅', warning: '⚠️', fail: '❌' }[status] || '❓';
-}
-
-function getStatusText(status) {
-    return { pass: 'Good', warning: 'Needs Improvement', fail: 'Needs Significant Work' }[status] || 'Unknown';
-}
-
-function getIssueIcon(type) {
-    return { error: '!', warning: '!', success: '✓' }[type] || '?';
-}
-
-function generateRecommendations(results) {
-    const recommendations = [];
-    
-    if (results.advancement.score < 75) {
-        recommendations.push("Line 242: Clearly state the baseline technology and what advancement was sought beyond it");
-    }
-    
-    if (results.uncertainty.score < 75) {
-        recommendations.push("Line 244: Explicitly state why a competent professional could not resolve the uncertainties using existing knowledge");
-    }
-    
-    if (results.work.score < 75) {
-        recommendations.push("Line 246: Detail the systematic experimentation process including hypotheses, tests, iterations, and conclusions");
-    }
-    
-    if (results.advancement.score > 0 && results.uncertainty.score > 0) {
-        recommendations.push("Ensure uncertainties (Line 244) directly relate to the advancement (Line 242)");
-    }
-    
-    if (results.work.score > 0 && results.uncertainty.score > 0) {
-        recommendations.push("Make sure work performed (Line 246) addresses each uncertainty listed in Line 244");
-    }
-    
-    recommendations.push("Use specific technical language and avoid business/commercial terminology");
-    
-    return recommendations.slice(0, 5);
+    return a;
 }
 
 // ============================================
-// REPORT GENERATOR
-// ============================================
-
-function generateReport() {
-    const inputs = {
-        title: document.getElementById('gen-title').value,
-        field: document.getElementById('gen-field').value,
-        objective: document.getElementById('gen-objective').value,
-        baseline: document.getElementById('gen-baseline').value,
-        advancement: document.getElementById('gen-advancement').value,
-        whyNotStandard: document.getElementById('gen-why-not-standard').value,
-        uncertainties: document.getElementById('gen-uncertainties').value,
-        whyUncertain: document.getElementById('gen-why-uncertain').value,
-        hypotheses: document.getElementById('gen-hypotheses').value,
-        experiments: document.getElementById('gen-experiments').value,
-        iterations: document.getElementById('gen-iterations').value,
-        results: document.getElementById('gen-results').value,
-        personnel: document.getElementById('gen-personnel').value
-    };
-    
-    // Check minimum required fields
-    if (!inputs.objective || !inputs.uncertainties || !inputs.experiments) {
-        alert('Please fill in at least: Objective, Uncertainties, and Experiments to generate a report.');
-        return;
-    }
-    
-    const report = {
-        line242: generateLine242(inputs),
-        line244: generateLine244(inputs),
-        line246: generateLine246(inputs)
-    };
-    
-    displayGeneratedReport(report, inputs.title);
-}
-
-function generateLine242(inputs) {
-    let text = '';
-    
-    // Opening with objective
-    if (inputs.objective) {
-        text += `The objective of this project was ${inputs.objective.toLowerCase().replace(/^to /, '')}.\n\n`;
-    }
-    
-    // Baseline
-    if (inputs.baseline) {
-        text += `At the outset of the project, the state of technology was as follows: ${inputs.baseline}\n\n`;
-    }
-    
-    // Advancement sought
-    if (inputs.advancement) {
-        text += `The technological advancement sought was ${inputs.advancement.toLowerCase().replace(/^the advancement /, '').replace(/^was /, '')}.\n\n`;
-    }
-    
-    // Why not standard practice
-    if (inputs.whyNotStandard) {
-        text += `This advancement could not be achieved through standard practice because ${inputs.whyNotStandard.toLowerCase()}`;
-    }
-    
-    return text.trim();
-}
-
-function generateLine244(inputs) {
-    let text = '';
-    
-    // Opening
-    text += `At the commencement of this project, the following technological uncertainties existed:\n\n`;
-    
-    // Uncertainties
-    if (inputs.uncertainties) {
-        const uncertaintyList = inputs.uncertainties.split('\n').filter(u => u.trim());
-        uncertaintyList.forEach((u, i) => {
-            const cleaned = u.replace(/^\d+[\.\)]\s*/, '').trim();
-            text += `${i + 1}. It was uncertain ${cleaned.toLowerCase().replace(/^it was uncertain /, '').replace(/^whether /, 'whether ')}\n`;
-        });
-        text += '\n';
-    }
-    
-    // Why not resolvable
-    if (inputs.whyUncertain) {
-        text += `These uncertainties could not be resolved by a competent professional using standard practice or publicly available knowledge because ${inputs.whyUncertain.toLowerCase()}\n\n`;
-    }
-    
-    // Hypotheses
-    if (inputs.hypotheses) {
-        text += `To address these uncertainties, the following hypotheses were formulated:\n\n`;
-        const hypothesisList = inputs.hypotheses.split('\n').filter(h => h.trim());
-        hypothesisList.forEach((h, i) => {
-            const cleaned = h.replace(/^[Hh]\d+[\.\:\)]\s*/, '').trim();
-            text += `H${i + 1}: ${cleaned}\n`;
-        });
-    }
-    
-    return text.trim();
-}
-
-function generateLine246(inputs) {
-    let text = '';
-    
-    // Opening
-    text += `A systematic investigation was conducted to address the technological uncertainties identified above.\n\n`;
-    
-    // Experiments
-    if (inputs.experiments) {
-        text += `The following experiments and tests were designed and performed:\n\n`;
-        const expList = inputs.experiments.split('\n').filter(e => e.trim());
-        expList.forEach(e => {
-            const cleaned = e.replace(/^[-•]\s*/, '').trim();
-            text += `• ${cleaned}\n`;
-        });
-        text += '\n';
-    }
-    
-    // Iterations
-    if (inputs.iterations) {
-        text += `Based on experimental results, the following iterations and modifications were made:\n\n`;
-        const iterList = inputs.iterations.split('\n').filter(i => i.trim());
-        iterList.forEach(i => {
-            const cleaned = i.replace(/^[-•]\s*/, '').trim();
-            text += `• ${cleaned}\n`;
-        });
-        text += '\n';
-    }
-    
-    // Results
-    if (inputs.results) {
-        text += `The investigation yielded the following results and conclusions: ${inputs.results}\n\n`;
-    }
-    
-    // Personnel
-    if (inputs.personnel) {
-        text += `This work was performed by qualified personnel including: ${inputs.personnel}.`;
-    }
-    
-    return text.trim();
-}
-
-function displayGeneratedReport(report, title) {
-    const resultsDiv = document.getElementById('generated-report');
-    resultsDiv.style.display = 'block';
-    
-    const html = `
-        <div class="results-header">
-            <h2>📝 Generated T661 Descriptions</h2>
-        </div>
-        
-        ${title ? `<p style="color: #71767b; margin-bottom: 20px;"><strong>Project:</strong> ${title}</p>` : ''}
-        
-        <div class="generated-section">
-            <h4>Line 242 - Scientific or Technological Advancement</h4>
-            <div class="generated-text">
-                <button class="copy-btn" onclick="copyText(this)">📋 Copy</button>
-                ${report.line242}
-            </div>
-            <p style="color: #71767b; margin-top: 10px; font-size: 0.85em;">Word count: ${countWords(report.line242)}</p>
-        </div>
-        
-        <div class="generated-section">
-            <h4>Line 244 - Scientific or Technological Uncertainty</h4>
-            <div class="generated-text">
-                <button class="copy-btn" onclick="copyText(this)">📋 Copy</button>
-                ${report.line244}
-            </div>
-            <p style="color: #71767b; margin-top: 10px; font-size: 0.85em;">Word count: ${countWords(report.line244)}</p>
-        </div>
-        
-        <div class="generated-section">
-            <h4>Line 246 - Work Performed</h4>
-            <div class="generated-text">
-                <button class="copy-btn" onclick="copyText(this)">📋 Copy</button>
-                ${report.line246}
-            </div>
-            <p style="color: #71767b; margin-top: 10px; font-size: 0.85em;">Word count: ${countWords(report.line246)}</p>
-        </div>
-        
-        <div class="analysis-card" style="margin-top: 20px; border-color: #ffd400;">
-            <h4 style="color: #ffd400;">⚠️ Important Notes</h4>
-            <ul class="issue-list">
-                <li>
-                    <span class="issue-icon warning">!</span>
-                    <span class="issue-text">Review and customize this generated text - it's a starting point, not a final report</span>
-                </li>
-                <li>
-                    <span class="issue-icon warning">!</span>
-                    <span class="issue-text">Add specific technical details, measurements, and metrics where possible</span>
-                </li>
-                <li>
-                    <span class="issue-icon warning">!</span>
-                    <span class="issue-text">Ensure the language accurately reflects your actual project work</span>
-                </li>
-                <li>
-                    <span class="issue-icon warning">!</span>
-                    <span class="issue-text">Have an SR&ED professional review before submission</span>
-                </li>
-            </ul>
-        </div>
-        
-        <button class="primary-btn" style="margin-top: 20px;" onclick="copyAllText()">📋 Copy All Sections</button>
-    `;
-    
-    resultsDiv.innerHTML = html;
-    resultsDiv.scrollIntoView({ behavior: 'smooth' });
-}
-
-function copyText(button) {
-    const textDiv = button.parentElement;
-    const text = textDiv.textContent.replace('📋 Copy', '').trim();
-    navigator.clipboard.writeText(text).then(() => {
-        button.textContent = '✓ Copied!';
-        setTimeout(() => button.textContent = '📋 Copy', 2000);
-    });
-}
-
-function copyAllText() {
-    const sections = document.querySelectorAll('.generated-text');
-    let allText = '';
-    
-    const titles = ['LINE 242 - SCIENTIFIC OR TECHNOLOGICAL ADVANCEMENT', 'LINE 244 - SCIENTIFIC OR TECHNOLOGICAL UNCERTAINTY', 'LINE 246 - WORK PERFORMED'];
-    
-    sections.forEach((section, i) => {
-        const text = section.textContent.replace('📋 Copy', '').trim();
-        allText += `${titles[i]}\n${'='.repeat(50)}\n\n${text}\n\n\n`;
-    });
-    
-    navigator.clipboard.writeText(allText).then(() => {
-        alert('All sections copied to clipboard!');
-    });
-}
-
-// ============================================
-// AI WRITER TAB
-// ============================================
-
-const AI_SERVER_URL = localStorage.getItem('sred_server_url') || 'http://localhost:5000';
-let aiServerOnline = false;
-
-// Check AI server status on load
-async function checkAIServer(customUrl) {
-    const url = customUrl || AI_SERVER_URL;
-    const statusDiv = document.getElementById('ai-status');
-    const barDot = document.getElementById('server-status-dot');
-    const barLabel = document.getElementById('server-status-label');
-
-    try {
-        const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
-        const data = await response.json();
-
-        if (data.status === 'ok') {
-            aiServerOnline = true;
-            const mode = data.model_loaded ? 'AI Model' : 'Template Mode';
-            const modeClass = data.model_loaded ? 'online' : 'template';
-            const fbCount = data.feedback_count || 0;
-
-            if (statusDiv) {
-                statusDiv.innerHTML = `<span class="status-dot ${modeClass}"></span><span class="status-text">Server Online - ${mode} | ${fbCount} ratings stored</span>`;
-            }
-            if (barDot) {
-                barDot.className = `status-dot ${modeClass}`;
-                barLabel.textContent = `Connected - ${mode} (${fbCount} ratings)`;
-            }
-
-            // Sync any local feedback to server
-            syncFeedbackToServer();
-        }
-    } catch (e) {
-        aiServerOnline = false;
-        if (statusDiv) {
-            statusDiv.innerHTML = `<span class="status-dot offline"></span><span class="status-text">AI Server Offline - feedback saved locally. <a href="#" onclick="showSetupHelp()">Setup Guide</a></span>`;
-        }
-        if (barDot) {
-            barDot.className = 'status-dot offline';
-            barLabel.textContent = 'Not connected - feedback saved locally';
-        }
-    }
-}
-
-function connectToServer() {
-    let url = document.getElementById('server-url-input').value.trim();
-    if (!url) {
-        url = 'http://localhost:5000';
-    }
-    // Remove trailing slash
-    url = url.replace(/\/+$/, '');
-    // Add https if no protocol
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://' + url;
-    }
-
-    localStorage.setItem('sred_server_url', url);
-    // Update the global
-    window._sredServerUrl = url;
-    document.getElementById('server-url-input').value = url;
-    checkAIServer(url);
-}
-
-function getServerUrl() {
-    return window._sredServerUrl || localStorage.getItem('sred_server_url') || 'http://localhost:5000';
-}
-
-function showSetupHelp() {
-    alert(
-        'To start the AI server:\n\n' +
-        '1. Open a terminal\n' +
-        '2. cd to your T661-Checker folder\n' +
-        '3. Run: python ai/server.py\n\n' +
-        'For AI model training:\n' +
-        '1. Install Axolotl: pip install axolotl\n' +
-        '2. Run: axolotl train ai/axolotl_config.yml\n' +
-        '3. Run: axolotl merge ai/axolotl_config.yml\n\n' +
-        'See the setup scripts in the ai/ folder for detailed instructions.'
-    );
-}
-
-function showAILoading(show) {
-    document.getElementById('ai-loading').style.display = show ? 'flex' : 'none';
-}
-
-// ============================================
-// RANDOM T661 PROJECT POOL
+// RANDOM T661 PROJECT POOL (18 diverse projects)
 // ============================================
 
 const RANDOM_PROJECTS = [
@@ -1085,163 +442,252 @@ const RANDOM_PROJECTS = [
     }
 ];
 
-function pickRandom(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function shuffleArray(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-}
+// ============================================
+// T661 REPORT GENERATION (proper word counts)
+// ============================================
 
 function generateRandomT661() {
     const project = pickRandom(RANDOM_PROJECTS);
+    showLoading(true);
 
-    showAILoading(true);
-
-    // Small delay to let the UI update
     setTimeout(() => {
         try {
             const result = buildRandomReport(project);
-            displayAIResults(result, project.title);
+            displayResults(result, project.title);
+            document.getElementById('help-text').style.display = 'none';
         } catch (e) {
             console.error('Generation error:', e);
             alert('Error generating report. Try again.');
         } finally {
-            showAILoading(false);
-            updateFeedbackStats();
+            showLoading(false);
+            updateStats();
         }
-    }, 300);
+    }, 200);
 }
 
 function buildRandomReport(p) {
-    // Pick a random subset of uncertainties (2-4)
-    const uncertainties = shuffleArray(p.uncertainties).slice(0, 2 + Math.floor(Math.random() * Math.min(3, p.uncertainties.length - 1)));
-    const experiments = shuffleArray(p.experiments).slice(0, 2 + Math.floor(Math.random() * Math.min(3, p.experiments.length - 1)));
-
-    // Vary sentence structure slightly
-    const advancementOpeners = [
-        `The objective of this project was to achieve a technological advancement in the field of ${p.field} through the ${p.objective}.`,
-        `This project sought to achieve a technological advancement through the ${p.objective}.`,
-        `The purpose of this project was to achieve a technological advancement by developing ${p.objective}.`,
-    ];
-
-    const baselineIntros = [
-        `At the outset of this project, the state of technology was as follows: ${p.baseline}`,
-        `At the commencement of this project, the existing state of technology in this field was: ${p.baseline}`,
-        `Prior to this project, the technological baseline was as follows: ${p.baseline}`,
-    ];
-
-    const closingAdvancement = [
-        `This advancement could not be achieved through standard practice because no known methodology or commercial solution could address the combined performance requirements. A competent professional in the field would not have been able to predict the outcomes without systematic investigation.`,
-        `The advancement sought exceeded what could be achieved by a competent professional using existing knowledge, publicly available literature, or standard industry practices. The combination of performance requirements represented a novel challenge not addressed by documented methodologies.`,
-        `This advancement could not be achieved through routine engineering or standard practice because the required combination of performance parameters exceeded the capabilities of any documented approach, commercial product, or published methodology in the field.`,
-    ];
-
-    // LINE 242
-    let line242 = `LINE 242 - SCIENTIFIC OR TECHNOLOGICAL ADVANCEMENT\n\n`;
-    line242 += pickRandom(advancementOpeners) + `\n\n`;
-    line242 += pickRandom(baselineIntros) + `\n\n`;
-    line242 += `The technological advancement sought was the ${p.objective}.\n\n`;
-    line242 += pickRandom(closingAdvancement);
-
-    // LINE 244
-    let line244 = `LINE 244 - SCIENTIFIC OR TECHNOLOGICAL UNCERTAINTY\n\n`;
-    line244 += `At the commencement of this project, the following technological uncertainties existed that could not be resolved by a competent professional in the field using standard practice, publicly available knowledge, or existing technical literature:\n\n`;
-    uncertainties.forEach((u, i) => {
-        line244 += `${i + 1}. It was uncertain ${u}\n\n`;
-    });
-    line244 += `These uncertainties could not be resolved through standard practice because the required combination of performance parameters and technical constraints represented challenges that no competent professional could address using existing tools, documented methodologies, or commercially available solutions.`;
-
-    // LINE 246
-    let line246 = `LINE 246 - WORK PERFORMED\n\n`;
-    line246 += `A systematic investigation was conducted by a team of ${p.personnel} to address the technological uncertainties identified above.\n\n`;
-    experiments.forEach((exp, i) => {
-        line246 += `Phase ${i + 1}: ${exp}\n\n`;
-    });
-    line246 += `Conclusions: ${p.results}\n\n`;
-    line246 += `The work described above constitutes a systematic investigation carried out in a field of science or technology by means of experiment or analysis, and is consistent with the definition of SR&ED under the Income Tax Act.`;
-
-    return { line242, line244, line246 };
+    return {
+        line242: buildLine242(p),
+        line244: buildLine244(p),
+        line246: buildLine246(p)
+    };
 }
 
-function updateFeedbackStats() {
-    const upCount = feedbackStore.filter(f => f.rating === 'up').length;
-    const downCount = feedbackStore.filter(f => f.rating === 'down').length;
-    const el = (id) => document.getElementById(id);
-    if (el('stat-up')) el('stat-up').textContent = upCount;
-    if (el('stat-down')) el('stat-down').textContent = downCount;
-    if (el('stat-total')) el('stat-total').textContent = feedbackStore.length;
+function buildLine242(p) {
+    // Paragraph 1: Objective (~100 words)
+    const objectiveParas = [
+        `The objective of this project was to achieve a technological advancement in the field of ${p.field} through the ${p.objective}. This initiative was undertaken to develop new technological knowledge and capabilities that extended beyond what was achievable through the application of standard practices and existing methodologies available to professionals working in this domain. The project required a team of ${p.personnel} to conduct systematic investigation and experimentation to address fundamental technical challenges that could not be resolved through routine engineering or by consulting publicly available information.`,
+
+        `This project sought to achieve a technological advancement through the ${p.objective}. The project's core aim was to push the boundaries of existing technology in the field of ${p.field} by developing novel approaches and generating new technical knowledge. The work was carried out by ${p.personnel}, who undertook systematic experimental investigation to address challenges that lay beyond the scope of standard industry practices. The specific technical goals of this project necessitated investigation and development work that could not have been accomplished through the straightforward application of existing tools, methods, or commercially available solutions.`,
+
+        `The technological advancement pursued in this project involved the ${p.objective}. This endeavor represented a significant departure from conventional approaches in the field of ${p.field}, requiring the generation of new knowledge through systematic experimentation and analysis. The project team, comprising ${p.personnel}, was assembled specifically to investigate and resolve a set of interconnected technological challenges that could not be addressed through standard engineering practices or by applying commercially available solutions. The technical objectives of this work went beyond incremental improvements and required fundamentally new understanding of the underlying phenomena.`
+    ];
+
+    // Paragraph 2: Baseline (~120 words)
+    const baselineParas = [
+        `At the outset of this project, the state of technology and standard practice in this field was as follows: ${p.baseline} These limitations represented fundamental constraints in the existing technological base that defined the boundaries of what a competent professional could accomplish using available knowledge, tools, and techniques. While incremental improvements within these established parameters were possible through standard engineering, the performance requirements of this project fell substantially outside the envelope of achievable outcomes using any combination of existing approaches. The gap between the current state of technology and the project objectives was not merely quantitative but required qualitative breakthroughs in approach and methodology.`,
+
+        `Prior to the commencement of this project, the technological baseline in this area was characterized by the following limitations: ${p.baseline} The existing body of knowledge and commercially available solutions were insufficient to meet the technical requirements of this project. A comprehensive review of published literature, industry best practices, vendor documentation, and patent databases confirmed that no documented methodology or combination of existing technologies could address the specific technical challenges identified. The project objectives exceeded the established performance boundaries of current technology by a margin that could not be bridged through the optimization or incremental improvement of existing approaches.`,
+
+        `At the commencement of this project, the existing state of technology was as follows: ${p.baseline} The limitations of current technology in this domain were well-documented and represented barriers that the broader technical community had not yet overcome. Standard industry practices and commercially available solutions operated within established performance boundaries that fell significantly short of the project's requirements. A thorough assessment of the technological landscape, including academic publications, industry standards, and vendor offerings, confirmed that no existing methodology could achieve the combination of technical parameters required by this project.`
+    ];
+
+    // Paragraph 3: Advancement + Beyond Standard Practice (~200 words)
+    const advancementParas = [
+        `The specific technological advancement sought was the ${p.objective}. This advancement, if achieved, would represent a meaningful contribution to the technological knowledge base in this field and would extend the capabilities available to practitioners beyond what was possible using established methods.\n\nThis advancement could not have been achieved through standard practice or routine engineering because the required performance parameters exceeded the capabilities of any documented approach or commercial solution. A competent professional working in this field, even with access to the full body of publicly available knowledge and standard tools, would not have been able to predict the feasibility of the proposed approach or determine the specific technical parameters required for success without conducting the systematic investigation described herein. The outcomes of this work were inherently uncertain and could only be established through experimental investigation.`,
+
+        `The technological advancement sought through this project was the ${p.objective}. Achieving this advancement required discovering new relationships between technical variables, developing novel methodologies, and generating knowledge that did not previously exist in any form accessible to practitioners in this field.\n\nThis advancement went beyond what could be achieved through standard practice because no combination of existing techniques, commercial products, or documented procedures could satisfy the project's technical requirements. The specific challenges involved interactions between multiple technical parameters whose combined effects were unknown and could not be predicted from first principles or existing empirical data. A competent professional in this field would have recognized these challenges as lying outside the established boundaries of current knowledge and practice. The resolution of these challenges required systematic investigation through experimentation and analysis, the outcomes of which could not be determined in advance.`,
+
+        `The technological advancement pursued was the ${p.objective}. This represented a genuine advance in the state of technology rather than an application or adaptation of existing knowledge, as it required the creation of new technical understanding that was not available through any existing channel.\n\nThis advancement could not have been realized through the application of standard practices, routine engineering, or the use of established tools and techniques. The technical challenges associated with this project were of a fundamental nature, involving unknowns that could not be resolved through theoretical analysis alone or by extrapolating from existing data. Even a highly competent professional with extensive experience in this field would not have been able to achieve the project objectives without undertaking systematic experimental work, as the necessary knowledge simply did not exist in the public domain or within standard industry practice.`
+    ];
+
+    return pickRandom(objectiveParas) + '\n\n' + pickRandom(baselineParas) + '\n\n' + pickRandom(advancementParas);
+}
+
+function buildLine244(p) {
+    // Opening paragraph
+    const openings = [
+        `At the commencement of this project, the following technological uncertainties existed that could not be resolved by a competent professional in the field using standard practice, publicly available technical literature, or existing knowledge bases. These uncertainties were technological in nature and pertained to fundamental questions about feasibility, methodology, and the relationships between critical technical parameters:`,
+
+        `The following technological uncertainties were identified at the outset of this project. These uncertainties could not have been resolved by a competent professional through the application of standard practices, reference to available technical publications, or consultation with recognized experts in the field. Each uncertainty represented a genuine gap in the existing body of technical knowledge:`,
+
+        `At the start of this project, several significant technological uncertainties existed that prevented the project objectives from being achieved through the straightforward application of existing knowledge. These uncertainties were identified through a systematic assessment of the current state of technology and represented genuine unknowns that could not be resolved without conducting experimental investigation:`
+    ];
+
+    // Build uncertainty paragraphs - use ALL uncertainties with elaboration
+    const elaborations = [
+        `This uncertainty was fundamental to the project because without resolving it, the viability of the entire approach could not be determined. Standard references and industry documentation did not provide guidance on this specific technical question, and the interactions between the relevant parameters were complex and unpredictable.`,
+        `This represented a critical knowledge gap that could not be addressed through theoretical modeling alone or by consulting existing technical resources. The specific conditions and performance requirements of this project created a unique set of constraints for which no precedent existed in the published literature.`,
+        `Resolving this uncertainty required empirical investigation because the relationships between the relevant technical variables under the specific conditions of this project were not documented in any available source. The complexity of the interactions involved made theoretical prediction unreliable.`,
+        `The resolution of this uncertainty could not be predicted from first principles or by extrapolation from published data, as the specific combination of parameters and constraints involved in this project had not been previously investigated or documented in the available body of knowledge.`
+    ];
+
+    let uncertaintyText = '';
+    p.uncertainties.forEach((u, i) => {
+        uncertaintyText += `${i + 1}. It was uncertain ${u}. ${pickRandom(elaborations)}\n\n`;
+    });
+
+    // Closing paragraph
+    const closings = [
+        `These technological uncertainties could not be resolved through standard practice because the specific combination of performance requirements, technical constraints, and operating conditions represented by this project fell outside the boundaries of documented knowledge in this field. A competent professional, even with extensive experience and access to all publicly available resources, could not have predicted the outcomes or determined appropriate solutions without conducting systematic experimental investigation. The hypotheses formulated to address these uncertainties had to be tested empirically, as no theoretical framework existed that could reliably predict the results under the specific conditions of this project.`,
+
+        `The resolution of these uncertainties required systematic experimentation and analysis that went beyond standard engineering practice. No combination of existing knowledge, published literature, vendor specifications, or expert consultation could provide definitive answers to these technical questions. The project team formulated hypotheses based on their professional expertise, but the validity of these hypotheses could only be established through controlled experimental investigation, as the relevant phenomena were not sufficiently understood to permit reliable theoretical prediction. A competent professional in this field would recognize that these uncertainties represented genuine gaps in the current body of technological knowledge.`,
+
+        `These uncertainties represented genuine gaps in the technological knowledge base that could not be bridged by applying standard practices or consulting existing resources. The technical questions posed by this project were not answerable through routine engineering analysis, as they involved complex interactions and phenomena that had not been adequately characterized in the available literature. To address these uncertainties, the project team developed specific hypotheses and designed experiments to test them systematically. The outcomes were not determinable in advance and could only be established through empirical investigation.`
+    ];
+
+    return pickRandom(openings) + '\n\n' + uncertaintyText + pickRandom(closings);
+}
+
+function buildLine246(p) {
+    // Opening paragraph
+    const openings = [
+        `A systematic investigation was conducted by a team of ${p.personnel} to address the technological uncertainties identified above. The work followed a structured experimental methodology designed to test specific hypotheses, collect empirical data, and iteratively refine the approach based on experimental results. The investigation was planned and executed in accordance with the principles of scientific inquiry, with clear experimental objectives, controlled test conditions, and rigorous data analysis at each stage.`,
+
+        `To resolve the technological uncertainties described in Line 244, a systematic program of experimentation and analysis was undertaken by ${p.personnel}. The investigation was structured as a series of experimental phases, each designed to address specific aspects of the technological uncertainties while building upon the knowledge generated in preceding phases. The team employed a hypothesis-driven methodology, designing controlled experiments, collecting quantitative data, analyzing results, and using the findings to guide subsequent investigation.`,
+
+        `The following systematic investigation was carried out to address the technological uncertainties identified above. The work was performed by qualified ${p.personnel} and followed a structured experimental methodology combining hypothesis formulation, controlled experimentation, data collection and analysis, and iterative refinement of the technical approach. Each experimental phase was designed to generate specific technical knowledge necessary for resolving one or more of the identified uncertainties.`
+    ];
+
+    // Experiment phases - use ALL experiments with elaboration
+    const phaseElaborations = [
+        `The results of this phase of investigation were carefully documented, analyzed, and used to refine the technical approach for subsequent experimental work. Multiple iterations were conducted within this phase, with each iteration informed by the quantitative data and observations from the preceding one. The team systematically varied experimental parameters to characterize the relationships between critical variables and identify the conditions that yielded optimal outcomes.`,
+
+        `This experimental work generated quantitative data that was analyzed using statistical methods to evaluate the significance of observed effects and relationships between variables. The findings from this phase informed design decisions and guided the focus of subsequent investigation. Where results deviated from initial hypotheses, additional targeted experiments were designed and executed to understand the underlying causes and refine the team's understanding.`,
+
+        `The data generated from this phase was subjected to rigorous analysis to extract meaningful insights about the underlying technical phenomena. The experimental results were compared against initial hypotheses and theoretical predictions, and discrepancies were investigated through additional controlled experiments. Lessons learned from this phase were incorporated into the experimental design of subsequent phases to maximize the efficiency of the investigation.`,
+
+        `Comprehensive records were maintained throughout this phase, including raw data, observations, experimental conditions, and analytical results. The team reviewed findings from each iteration to identify trends, validate or refute hypotheses, and determine the most promising directions for continued investigation. This systematic approach ensured that each experiment contributed meaningful knowledge toward resolving the identified uncertainties.`
+    ];
+
+    let experimentText = '';
+    p.experiments.forEach((exp, i) => {
+        const labels = ['Phase', 'Experimental Phase', 'Investigation Phase', 'Stage'];
+        experimentText += `${pickRandom(labels)} ${i + 1}: ${exp}\n\n${pickRandom(phaseElaborations)}\n\n`;
+    });
+
+    // Results and conclusions
+    const conclusions = [
+        `The investigation yielded the following key results and conclusions: ${p.results} These results represent the culmination of the systematic experimental program described above and constitute new technological knowledge that was not available prior to the commencement of this project. The knowledge generated through this investigation advances the state of technology in this field and was achieved solely through the systematic experimental work described herein.`,
+
+        `Results and Conclusions: ${p.results} The outcomes described above were achieved through the systematic experimental investigation detailed in the preceding phases. Each result represents new technical knowledge that was generated through empirical experimentation and analysis, and could not have been predicted or obtained through the application of existing knowledge or standard industry practices.`,
+
+        `Conclusions of the Investigation: ${p.results} These outcomes were not determinable in advance and could only have been established through the systematic program of experimentation and analysis described above. The findings constitute a genuine advancement in the state of technical knowledge in this field and were dependent on the experimental methodology employed.`
+    ];
+
+    // Closing SR&ED statement
+    const closings = [
+        `The work described above constitutes a systematic investigation carried out in a field of science or technology by means of experiment and analysis. The investigation was undertaken for the purpose of achieving a technological advancement and involved the identification and resolution of technological uncertainties through planned experimentation. The work is consistent with the definition of scientific research and experimental development under subsection 248(1) of the Income Tax Act.`,
+
+        `The systematic investigation described above represents eligible SR&ED work as it involved planned experimentation conducted for the purpose of achieving a technological advancement through the resolution of technological uncertainties. The work was carried out by qualified personnel using scientific methodology, and the outcomes could not have been determined in advance without conducting the experimental work described.`,
+
+        `This investigation involved systematic experimental work conducted for the purpose of achieving a technological advancement that could not have been accomplished through routine engineering or standard practices. The work involved the formulation and testing of hypotheses, controlled experimentation, and iterative analysis, all of which are consistent with the definition of SR&ED under the Income Tax Act.`
+    ];
+
+    return pickRandom(openings) + '\n\n' + experimentText + pickRandom(conclusions) + '\n\n' + pickRandom(closings);
 }
 
 // ============================================
-// FEEDBACK SYSTEM - Thumbs Up/Down per paragraph
+// DISPLAY - Results with word-level feedback
 // ============================================
 
-let feedbackStore = JSON.parse(localStorage.getItem('sred_feedback') || '[]');
-let currentGenerationId = 0;
+function displayResults(sections, title) {
+    const container = document.getElementById('results-container');
+    container.style.display = 'block';
+    currentGenerationId++;
+    localStorage.setItem('sred_gen_id', currentGenerationId);
+    const genId = `gen_${currentGenerationId}_${Date.now()}`;
 
-function saveFeedback() {
-    localStorage.setItem('sred_feedback', JSON.stringify(feedbackStore));
-    updateFeedbackBadge();
-    updateFeedbackStats();
-    // Also push to remote server if connected
-    pushLatestFeedbackToServer();
-}
+    const sectionNames = {
+        line242: 'Line 242 — Scientific or Technological Advancement',
+        line244: 'Line 244 — Scientific or Technological Uncertainty',
+        line246: 'Line 246 — Work Performed'
+    };
 
-async function pushLatestFeedbackToServer() {
-    if (!aiServerOnline) return;
-    const latest = feedbackStore[feedbackStore.length - 1];
-    if (!latest) return;
-    try {
-        await fetch(`${getServerUrl()}/feedback`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(latest),
-        });
-    } catch (e) {
-        // Silent fail - feedback is saved locally
+    let html = `
+        <div class="results-header">
+            <h2>T661 Report</h2>
+            <p class="results-title">${title}</p>
+        </div>
+    `;
+
+    for (const [key, text] of Object.entries(sections)) {
+        if (!text) continue;
+        const name = sectionNames[key] || key;
+        const wordCount = countWords(text);
+
+        html += `
+            <div class="generated-section" data-gen-id="${genId}" data-section="${key}">
+                <div class="section-header">
+                    <h4>${name}</h4>
+                    <span class="word-count">${wordCount} words</span>
+                </div>
+                <div class="generated-text fb-container">
+                    ${buildFeedbackSection(key, text, genId)}
+                </div>
+            </div>
+        `;
     }
+
+    html += `
+        <div class="gen-actions">
+            <button class="gen-btn" onclick="generateRandomT661()">🎲 Next Random T661</button>
+            <button class="copy-all-btn" onclick="copyAllText()">📋 Copy All</button>
+        </div>
+    `;
+
+    container.innerHTML = html;
+    container.scrollIntoView({ behavior: 'smooth' });
 }
 
-async function syncFeedbackToServer() {
-    if (!aiServerOnline) return;
-    const serverUrl = getServerUrl();
-    try {
-        // Get count from server
-        const resp = await fetch(`${serverUrl}/feedback`, { signal: AbortSignal.timeout(3000) });
-        const data = await resp.json();
-        const serverCount = data.count || 0;
-        const localCount = feedbackStore.length;
+function buildFeedbackSection(sectionKey, text, genId) {
+    const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
 
-        // If we have more locally, push all to server
-        if (localCount > serverCount) {
-            for (const fb of feedbackStore) {
-                await fetch(`${serverUrl}/feedback`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(fb),
-                });
-            }
-            console.log(`Synced ${localCount} feedback items to server`);
-        }
-    } catch (e) {
-        console.log('Feedback sync skipped:', e.message);
-    }
+    let html = '';
+    paragraphs.forEach((para, i) => {
+        const existing = feedbackStore.find(f =>
+            f.genId === genId && f.section === sectionKey && f.paraIndex === i
+        );
+        const upClass = existing && existing.rating === 'up' ? 'active-up' : '';
+        const downClass = existing && existing.rating === 'down' ? 'active-down' : '';
+
+        // Wrap each word in a clickable span for word-level feedback
+        const wordSpans = wrapWordsInSpans(para, sectionKey, i, genId);
+
+        html += `
+            <div class="fb-paragraph" data-para-index="${i}">
+                <div class="fb-para-text">${wordSpans}</div>
+                <div class="fb-actions">
+                    <button class="fb-btn fb-up ${upClass}" onclick="rateParagraph(this, '${sectionKey}', ${i}, 'up')" title="Good paragraph">👍</button>
+                    <button class="fb-btn fb-down ${downClass}" onclick="rateParagraph(this, '${sectionKey}', ${i}, 'down')" title="Bad paragraph">👎</button>
+                </div>
+            </div>
+        `;
+    });
+
+    return html;
 }
 
-function updateFeedbackBadge() {
-    const badge = document.getElementById('feedback-count-badge');
-    if (badge) {
-        const count = feedbackStore.length;
-        badge.textContent = count;
-        badge.style.display = count > 0 ? 'inline-flex' : 'none';
-    }
+function wrapWordsInSpans(text, sectionKey, paraIndex, genId) {
+    // Split into words and whitespace, preserving spacing
+    const tokens = text.split(/(\s+)/);
+    let wordIndex = 0;
+
+    return tokens.map(token => {
+        if (/^\s+$/.test(token)) return token; // Keep whitespace as-is
+        const idx = wordIndex++;
+        const isBad = badWordsStore.some(w =>
+            w.genId === genId && w.section === sectionKey &&
+            w.paraIndex === paraIndex && w.wordIndex === idx
+        );
+        const cls = isBad ? 'word bad' : 'word';
+        return `<span class="${cls}" data-word-index="${idx}" onclick="toggleBadWord(this,'${sectionKey}',${paraIndex},${idx})">${token}</span>`;
+    }).join('');
 }
+
+// ============================================
+// FEEDBACK SYSTEM
+// ============================================
 
 function rateParagraph(btn, sectionKey, paraIndex, rating) {
     const paraEl = btn.closest('.fb-paragraph');
@@ -1265,287 +711,257 @@ function rateParagraph(btn, sectionKey, paraIndex, rating) {
         feedbackStore.splice(existing, 1);
     }
 
-    // Get the full section text and prompt for context
-    const fullText = sectionEl.querySelector('.generated-text').textContent.replace(/📋 Copy/g, '').trim();
-    const promptEl = document.getElementById('ai-summary') || document.getElementById('ai-title');
-    const prompt = promptEl ? promptEl.value : '';
+    // Get full section text for training context
+    const fullText = sectionEl.querySelector('.generated-text').textContent.trim();
 
-    feedbackStore.push({
+    const entry = {
+        type: 'paragraph',
         genId,
         section: sectionKey,
         paraIndex,
         paraText,
         fullSectionText: fullText,
-        prompt,
-        rating, // 'up' or 'down'
-        timestamp: new Date().toISOString(),
-    });
+        rating,
+        timestamp: new Date().toISOString()
+    };
+
+    feedbackStore.push(entry);
 
     // Update button visuals
     paraEl.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('active-up', 'active-down'));
     btn.classList.add(rating === 'up' ? 'active-up' : 'active-down');
 
-    saveFeedback();
-
-    // Subtle animation
+    // Flash animation
     paraEl.classList.add('fb-flash-' + rating);
     setTimeout(() => paraEl.classList.remove('fb-flash-' + rating), 400);
+
+    saveFeedback();
+    pushToServer(entry);
 }
 
-function splitIntoParagraphs(text) {
-    // Split on double newlines or <br><br>, filter empties
-    return text
-        .replace(/<br\s*\/?>/gi, '\n')
-        .split(/\n\n+/)
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
-}
+function toggleBadWord(span, sectionKey, paraIndex, wordIndex) {
+    const sectionEl = span.closest('.generated-section');
+    const genId = sectionEl.dataset.genId;
+    const word = span.textContent.trim();
 
-function buildFeedbackSection(sectionKey, text, genId) {
-    const paragraphs = splitIntoParagraphs(text);
-
-    let html = '';
-    paragraphs.forEach((para, i) => {
-        // Check if there's existing feedback
-        const existing = feedbackStore.find(f =>
-            f.genId === genId && f.section === sectionKey && f.paraIndex === i
-        );
-        const upClass = existing && existing.rating === 'up' ? 'active-up' : '';
-        const downClass = existing && existing.rating === 'down' ? 'active-down' : '';
-
-        html += `
-            <div class="fb-paragraph" data-para-index="${i}">
-                <div class="fb-para-text">${para}</div>
-                <div class="fb-actions">
-                    <button class="fb-btn fb-up ${upClass}" onclick="rateParagraph(this, '${sectionKey}', ${i}, 'up')" title="Good - keep this style">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M2 20h2c.55 0 1-.45 1-1v-9c0-.55-.45-1-1-1H2v11zm19.83-7.12c.11-.25.17-.52.17-.8V11c0-1.1-.9-2-2-2h-5.5l.92-4.65c.05-.22.02-.46-.08-.66-.23-.45-.52-.86-.88-1.22L14 2 7.59 8.41C7.21 8.79 7 9.3 7 9.83v7.84C7 18.95 8.05 20 9.34 20h8.11c.7 0 1.36-.37 1.72-.97l2.66-6.15z"/></svg>
-                    </button>
-                    <button class="fb-btn fb-down ${downClass}" onclick="rateParagraph(this, '${sectionKey}', ${i}, 'down')" title="Bad - needs improvement">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
-                    </button>
-                </div>
-            </div>
-        `;
-    });
-
-    return html;
-}
-
-function exportFeedbackAsDPO() {
-    if (feedbackStore.length === 0) {
-        alert('No feedback collected yet. Rate some paragraphs with 👍/👎 first!');
-        return;
-    }
-
-    // Group feedback by genId + section to build DPO pairs
-    const groups = {};
-    for (const fb of feedbackStore) {
-        const key = `${fb.genId}_${fb.section}`;
-        if (!groups[key]) groups[key] = { prompt: fb.prompt, section: fb.section, fullText: fb.fullSectionText, items: [] };
-        groups[key].items.push(fb);
-    }
-
-    const dpoData = [];
-
-    for (const group of Object.values(groups)) {
-        const upParas = group.items.filter(i => i.rating === 'up').map(i => i.paraText);
-        const downParas = group.items.filter(i => i.rating === 'down').map(i => i.paraText);
-
-        if (upParas.length > 0 && downParas.length > 0) {
-            // Full DPO pair: chosen = liked paragraphs, rejected = disliked ones
-            dpoData.push({
-                prompt: `Write a T661 ${group.section} description for the following project: ${group.prompt}`,
-                chosen: upParas.join('\n\n'),
-                rejected: downParas.join('\n\n'),
-            });
-        } else if (upParas.length > 0) {
-            // Only positive: use as SFT data (chosen only)
-            dpoData.push({
-                prompt: `Write a T661 ${group.section} description for the following project: ${group.prompt}`,
-                chosen: upParas.join('\n\n'),
-                rejected: '',
-            });
-        } else if (downParas.length > 0) {
-            // Only negative: use as rejected examples
-            dpoData.push({
-                prompt: `Write a T661 ${group.section} description for the following project: ${group.prompt}`,
-                chosen: '',
-                rejected: downParas.join('\n\n'),
-            });
-        }
-    }
-
-    // Also export as Axolotl-compatible ShareGPT for SFT
-    const sftData = [];
-    for (const fb of feedbackStore) {
-        if (fb.rating === 'up') {
-            sftData.push({
-                conversations: [
-                    { from: 'system', value: 'You are an expert SR&ED report writer specializing in CRA T661 form project descriptions.' },
-                    { from: 'human', value: `Write a T661 ${fb.section} description for: ${fb.prompt}` },
-                    { from: 'gpt', value: fb.paraText },
-                ],
-                source: 'user_feedback_positive',
-            });
-        }
-    }
-
-    // Build downloadable files
-    const dpoJsonl = dpoData.map(d => JSON.stringify(d)).join('\n');
-    const sftJsonl = sftData.map(d => JSON.stringify(d)).join('\n');
-
-    // Download DPO data
-    if (dpoData.length > 0) {
-        downloadFile('sred_dpo_feedback.jsonl', dpoJsonl);
-    }
-    // Download SFT data
-    if (sftData.length > 0) {
-        downloadFile('sred_sft_feedback.jsonl', sftJsonl);
-    }
-
-    const stats = {
-        total: feedbackStore.length,
-        thumbsUp: feedbackStore.filter(f => f.rating === 'up').length,
-        thumbsDown: feedbackStore.filter(f => f.rating === 'down').length,
-        dpoPairs: dpoData.filter(d => d.chosen && d.rejected).length,
-        sftExamples: sftData.length,
-    };
-
-    alert(
-        `Feedback exported!\n\n` +
-        `Total ratings: ${stats.total} (👍 ${stats.thumbsUp} / 👎 ${stats.thumbsDown})\n` +
-        `DPO pairs (chosen vs rejected): ${stats.dpoPairs}\n` +
-        `SFT examples (positive only): ${stats.sftExamples}\n\n` +
-        `Files downloaded:\n` +
-        `• sred_dpo_feedback.jsonl - for DPO training\n` +
-        `• sred_sft_feedback.jsonl - for SFT training\n\n` +
-        `To train:\n` +
-        `1. Copy files to ai/dataset/\n` +
-        `2. Run: axolotl train ai/axolotl_dpo_config.yml`
+    const idx = badWordsStore.findIndex(w =>
+        w.genId === genId && w.section === sectionKey &&
+        w.paraIndex === paraIndex && w.wordIndex === wordIndex
     );
+
+    if (idx >= 0) {
+        // Toggle off
+        badWordsStore.splice(idx, 1);
+        span.classList.remove('bad');
+    } else {
+        const entry = {
+            type: 'word',
+            genId,
+            section: sectionKey,
+            paraIndex,
+            wordIndex,
+            word,
+            timestamp: new Date().toISOString()
+        };
+        badWordsStore.push(entry);
+        span.classList.add('bad');
+        pushToServer(entry);
+    }
+
+    saveBadWords();
+    updateStats();
 }
 
-function downloadFile(filename, content) {
-    const blob = new Blob([content], { type: 'application/jsonl' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+function saveFeedback() {
+    localStorage.setItem('sred_feedback', JSON.stringify(feedbackStore));
+    updateStats();
+}
+
+function saveBadWords() {
+    localStorage.setItem('sred_bad_words', JSON.stringify(badWordsStore));
+    updateStats();
+}
+
+async function pushToServer(entry) {
+    if (!aiServerOnline) return;
+    try {
+        await fetch(`${getServerUrl()}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(entry)
+        });
+        // Server auto-exports DPO/SFT on every feedback submission
+    } catch (e) {
+        // Saved locally — will sync later
+    }
+}
+
+async function syncFeedbackToServer() {
+    if (!aiServerOnline) return;
+    const serverUrl = getServerUrl();
+    try {
+        const resp = await fetch(`${serverUrl}/feedback`, { signal: AbortSignal.timeout(3000) });
+        const data = await resp.json();
+        const serverCount = data.count || 0;
+        const localCount = feedbackStore.length + badWordsStore.length;
+
+        if (localCount > serverCount) {
+            // Push all local feedback
+            const allEntries = [
+                ...feedbackStore.map(f => ({ ...f, type: f.type || 'paragraph' })),
+                ...badWordsStore.map(w => ({ ...w, type: 'word' }))
+            ];
+            for (const entry of allEntries) {
+                await fetch(`${serverUrl}/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(entry)
+                });
+            }
+            console.log(`Synced ${localCount} feedback items to server`);
+        }
+
+        // Update trained count from server
+        const el = document.getElementById('stat-trained');
+        if (el && data.trained_count !== undefined) {
+            el.textContent = data.trained_count;
+        }
+    } catch (e) {
+        console.log('Feedback sync skipped:', e.message);
+    }
+}
+
+// ============================================
+// SERVER CONNECTION
+// ============================================
+
+function getServerUrl() {
+    return window._sredServerUrl || localStorage.getItem('sred_server_url') || 'http://localhost:5000';
+}
+
+async function checkAIServer(customUrl) {
+    const url = customUrl || getServerUrl();
+    const barDot = document.getElementById('server-status-dot');
+    const barLabel = document.getElementById('server-status-label');
+
+    try {
+        const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+        const data = await response.json();
+
+        if (data.status === 'ok') {
+            aiServerOnline = true;
+            const fbCount = data.feedback_count || 0;
+
+            if (barDot) {
+                barDot.className = 'status-dot online';
+                barLabel.textContent = `Connected (${fbCount} ratings on server)`;
+            }
+
+            // Sync local feedback to server
+            syncFeedbackToServer();
+        }
+    } catch (e) {
+        aiServerOnline = false;
+        if (barDot) {
+            barDot.className = 'status-dot offline';
+            barLabel.textContent = 'Not connected — feedback saved locally';
+        }
+    }
+}
+
+function connectToServer() {
+    let url = document.getElementById('server-url-input').value.trim();
+    if (!url) url = 'http://localhost:5000';
+    url = url.replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+
+    localStorage.setItem('sred_server_url', url);
+    window._sredServerUrl = url;
+    document.getElementById('server-url-input').value = url;
+    checkAIServer(url);
+}
+
+// ============================================
+// UI HELPERS
+// ============================================
+
+function showLoading(show) {
+    document.getElementById('ai-loading').style.display = show ? 'flex' : 'none';
+}
+
+function updateStats() {
+    const upCount = feedbackStore.filter(f => f.rating === 'up').length;
+    const downCount = feedbackStore.filter(f => f.rating === 'down').length;
+    const wordCount = badWordsStore.length;
+    const totalTrained = feedbackStore.length + wordCount;
+
+    const el = (id) => document.getElementById(id);
+    if (el('stat-up')) el('stat-up').textContent = upCount;
+    if (el('stat-down')) el('stat-down').textContent = downCount;
+    if (el('stat-words')) el('stat-words').textContent = wordCount;
+    if (el('stat-trained')) el('stat-trained').textContent = totalTrained;
 }
 
 function clearFeedback() {
-    if (confirm(`Clear all ${feedbackStore.length} feedback ratings? This cannot be undone.`)) {
+    const total = feedbackStore.length + badWordsStore.length;
+    if (total === 0) {
+        alert('No feedback to clear.');
+        return;
+    }
+    if (confirm(`Clear all ${total} feedback ratings? This cannot be undone.`)) {
         feedbackStore = [];
+        badWordsStore = [];
         saveFeedback();
-        alert('Feedback cleared.');
+        saveBadWords();
+        // Re-display current results without feedback state
+        const container = document.getElementById('results-container');
+        if (container.style.display !== 'none') {
+            document.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('active-up', 'active-down'));
+            document.querySelectorAll('.word.bad').forEach(w => w.classList.remove('bad'));
+        }
     }
 }
 
-function displayAIResults(sections, title, isImprovement = false) {
-    const container = document.getElementById('ai-results-container');
-    container.style.display = 'block';
-    currentGenerationId++;
-    const genId = `gen_${currentGenerationId}_${Date.now()}`;
-
-    const sectionNames = {
-        line242: 'Line 242 - Scientific or Technological Advancement',
-        line244: 'Line 244 - Scientific or Technological Uncertainty',
-        line246: 'Line 246 - Work Performed',
-    };
-
-    let html = `
-        <div class="results-header">
-            <h2>${isImprovement ? '🔧 Improved' : '🤖 AI Generated'} T661 Descriptions</h2>
-            <div class="fb-header-actions">
-                <span class="fb-info" title="Rate each paragraph with 👍/👎 to train the AI">Rate paragraphs to improve future results</span>
-            </div>
-        </div>
-        ${title ? `<p style="color: #71767b; margin-bottom: 20px;"><strong>Project:</strong> ${title}</p>` : ''}
-    `;
-
-    for (const [key, text] of Object.entries(sections)) {
-        if (!text) continue;
-        const name = sectionNames[key] || key;
-        const wordCount = countWords(text);
-
-        html += `
-            <div class="generated-section" data-gen-id="${genId}" data-section="${key}">
-                <h4>${name}</h4>
-                <div class="generated-text fb-container">
-                    <button class="copy-btn" onclick="copyText(this)">📋 Copy</button>
-                    ${buildFeedbackSection(key, text, genId)}
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                    <span style="color: #71767b; font-size: 0.85em;">Word count: ${wordCount}</span>
-                    <button class="secondary-btn" onclick="sendToChecker('${key}', this)">🔍 Run Checker on This</button>
-                </div>
-            </div>
-        `;
-    }
-
-    html += `
-        <div class="ai-actions">
-            <button class="primary-btn ai-btn" onclick="generateRandomT661()">🎲 Next Random T661</button>
-            <button class="secondary-btn" onclick="copyAllAIText()">📋 Copy All</button>
-        </div>
-    `;
-
-    container.innerHTML = html;
-    updateFeedbackBadge();
-    container.scrollIntoView({ behavior: 'smooth' });
-}
-
-function sendToChecker(sectionKey, btn) {
-    const textDiv = btn.closest('.generated-section').querySelector('.generated-text');
-    const text = textDiv.textContent.replace('📋 Copy', '').trim();
-
-    const fieldMap = {
-        line242: 'check-advancement',
-        line244: 'check-uncertainty',
-        line246: 'check-work',
-    };
-
-    const targetId = fieldMap[sectionKey];
-    if (targetId) {
-        document.getElementById(targetId).value = text;
-        // Switch to checker tab
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector('.tab-btn[data-tab="checker"]').classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('checker-tab').classList.add('active');
-        // Trigger word count
-        document.getElementById(targetId).dispatchEvent(new Event('input'));
-    }
-}
-
-function copyAllAIText() {
-    const sections = document.querySelectorAll('#ai-results-container .generated-text');
+function copyAllText() {
+    const sections = document.querySelectorAll('.generated-section');
     let allText = '';
-    const titles = ['LINE 242 - SCIENTIFIC OR TECHNOLOGICAL ADVANCEMENT', 'LINE 244 - SCIENTIFIC OR TECHNOLOGICAL UNCERTAINTY', 'LINE 246 - WORK PERFORMED'];
+    const titles = {
+        line242: 'LINE 242 — SCIENTIFIC OR TECHNOLOGICAL ADVANCEMENT',
+        line244: 'LINE 244 — SCIENTIFIC OR TECHNOLOGICAL UNCERTAINTY',
+        line246: 'LINE 246 — WORK PERFORMED'
+    };
 
-    sections.forEach((section, i) => {
-        const text = section.textContent.replace('📋 Copy', '').trim();
-        const title = titles[i] || `SECTION ${i + 1}`;
+    sections.forEach(section => {
+        const key = section.dataset.section;
+        const title = titles[key] || key;
+        const text = section.querySelector('.generated-text').textContent.trim();
         allText += `${title}\n${'='.repeat(50)}\n\n${text}\n\n\n`;
     });
 
     navigator.clipboard.writeText(allText).then(() => {
-        alert('All sections copied to clipboard!');
+        const btn = document.querySelector('.copy-all-btn');
+        if (btn) {
+            btn.textContent = '✓ Copied!';
+            setTimeout(() => btn.textContent = '📋 Copy All', 2000);
+        }
     });
 }
 
-// Check server on page load
-setTimeout(() => {
+// ============================================
+// INITIALIZATION
+// ============================================
+
+(function init() {
     const savedUrl = localStorage.getItem('sred_server_url');
     if (savedUrl) {
         const input = document.getElementById('server-url-input');
         if (input) input.value = savedUrl;
         window._sredServerUrl = savedUrl;
-    }
+    }    
     checkAIServer(savedUrl || undefined);
-    updateFeedbackStats();
-}, 500);
+    updateStats();
+})();
 
-console.log('SR&ED Report Checker & Generator loaded');
+console.log('T661 AI Trainer loaded');
